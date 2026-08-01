@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const POLL_INTERVAL_MS = 1500
 
 /**
  * Generates a timetable for the whole school (every section + every
@@ -10,33 +11,141 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
  * in the school in one solve) and displays it as a day x period grid,
  * either for the currently selected section or for a chosen teacher
  * across all their sections.
+ *
+ * Generation runs as a background job on the backend (see
+ * backend/app/routers/timetables.py) because a large school's solve can
+ * take up to a minute — too long to hold an HTTP request open. So instead
+ * of awaiting one blocking call, we kick the job off, get back a
+ * "generating" row immediately, and poll GET /api/timetables/{id} on an
+ * interval until status is no longer "generating".
+ *
+ * The Export links download the whole school's timetable as a single
+ * file (every section + every teacher, one sheet/page each — see
+ * backend/app/services/export.py), not just whatever's currently shown
+ * on screen, since that's what an admin printing schedules actually
+ * wants.
+ *
+ * Once a timetable is generated, individual slots can be hand-edited in
+ * the "By Section" view: click the lock icon to pin a slot so the next
+ * regenerate leaves it exactly where it is (see PATCH
+ * /api/timetables/entries/{id} in backend/app/routers/timetables.py, and
+ * the locked-entry handling in backend/app/services/solver.py), or drag
+ * an unlocked entry to a different period to move it by hand. Both go
+ * through the same PATCH endpoint, which rejects the change with a
+ * message if it would double-book the class, the teacher, or the room —
+ * that message is what ends up in `error` and shown below the grid.
+ * Editing is section-view-only: the "By Teacher" view mixes entries from
+ * several different classes, where "move this" is ambiguous.
  */
-export default function TimetableTab({ schoolId, classGroup, classGroups, teachers }) {
+export default function TimetableTab({ schoolId, classGroup, classGroups, teachers, readOnly = false }) {
   const [periods, setPeriods] = useState([])
-  const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [timetable, setTimetable] = useState(null) // latest TimetableOut from the backend
+  const [generating, setGenerating] = useState(false)
   const [view, setView] = useState('section') // 'section' | 'teacher'
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id ?? null)
   const [error, setError] = useState(null)
+  const [dragEntryId, setDragEntryId] = useState(null)
+  const pollRef = useRef(null)
 
   useEffect(() => {
     api.listPeriods(schoolId).then(setPeriods).catch((err) => setError(err.message))
-    setResult(null)
+    setTimetable(null)
+    stopPolling()
+    return stopPolling
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId])
 
   useEffect(() => {
     if (!selectedTeacherId && teachers.length > 0) setSelectedTeacherId(teachers[0].id)
   }, [teachers, selectedTeacherId])
 
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  function pollUntilDone(timetableId) {
+    stopPolling()
+    pollRef.current = setInterval(async () => {
+      try {
+        const updated = await api.getTimetable(timetableId)
+        setTimetable(updated)
+        if (updated.status !== 'generating') {
+          stopPolling()
+          setGenerating(false)
+        }
+      } catch (err) {
+        stopPolling()
+        setGenerating(false)
+        setError(err.message)
+      }
+    }, POLL_INTERVAL_MS)
+  }
+
   async function handleGenerate() {
-    setLoading(true)
+    setGenerating(true)
     setError(null)
+    setTimetable(null)
     try {
-      setResult(await api.generateTimetable(schoolId))
+      const created = await api.generateTimetable(schoolId)
+      setTimetable(created)
+      if (created.status === 'generating') {
+        pollUntilDone(created.id)
+      } else {
+        setGenerating(false)
+      }
     } catch (err) {
       setError(err.message)
-    } finally {
-      setLoading(false)
+      setGenerating(false)
+    }
+  }
+
+  async function refreshTimetable() {
+    if (!timetable) return
+    try {
+      setTimetable(await api.getTimetable(timetable.id))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleToggleLock(entry) {
+    setError(null)
+    try {
+      await api.updateTimetableEntry(entry.id, { locked: !entry.locked })
+      await refreshTimetable()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleDrop(day, order) {
+    const entryId = dragEntryId
+    setDragEntryId(null)
+    if (!entryId) return
+    const targetPeriod = periodAt(day, order)
+    if (!targetPeriod) return
+    const targetEntry = entryFor(day, order)
+    if (targetEntry && targetEntry.id === entryId) return // dropped back on itself
+    if (targetEntry && targetEntry.locked) {
+      setError("That slot is locked — unlock it before swapping something into it.")
+      return
+    }
+    setError(null)
+    try {
+      if (targetEntry) {
+        // Target cell is already occupied — a plain move would look like
+        // a double-booking (the other entry is still "there" until it
+        // moves too), so swap both entries' periods in one request instead.
+        await api.swapTimetableEntries(entryId, targetEntry.id)
+      } else {
+        await api.updateTimetableEntry(entryId, { period_id: targetPeriod.id })
+      }
+      await refreshTimetable()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -49,20 +158,22 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
 
   function entryFor(day, order) {
     const period = periodAt(day, order)
-    if (!period || !result?.timetable) return null
+    if (!period || !timetable) return null
     if (view === 'section') {
-      return result.timetable.entries.find(
+      return timetable.entries.find(
         (e) => e.period_id === period.id && e.class_group_id === classGroup.id
       )
     }
-    return result.timetable.entries.find(
+    return timetable.entries.find(
       (e) => e.period_id === period.id && e.teacher_id === selectedTeacherId
     )
   }
 
   const classGroupName = (id) => classGroups.find((c) => c.id === id)?.name
 
-  const solved = result && (result.solver_status === 'optimal' || result.solver_status === 'feasible')
+  const isGenerating = generating || timetable?.status === 'generating'
+  const failed = !isGenerating && timetable?.status === 'failed'
+  const solved = !isGenerating && timetable?.status === 'draft'
 
   return (
     <div className="flex flex-col gap-5">
@@ -71,72 +182,111 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
           <h3 className="text-lg font-medium">Generate timetable</h3>
           <p className="mt-1 text-sm text-slate-500">
             Solves for the whole school at once, so teachers shared across
-            sections never overlap.
+            sections never overlap. Large schools can take up to a minute —
+            feel free to switch tabs while it runs. In the By Section view
+            you can drag a slot onto a free cell to move it, drag it onto
+            another slot to swap the two, or click 🔓 to lock it in place
+            before regenerating.
           </p>
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {loading ? 'Generating…' : 'Generate Timetable'}
-        </button>
+        {!readOnly && (
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          >
+            {isGenerating ? 'Generating…' : 'Generate Timetable'}
+          </button>
+        )}
       </div>
 
       <div className="h-px bg-slate-200" />
 
-      {loading && (
+      {isGenerating && (
         <div className="flex flex-col items-center justify-center gap-3 py-16 text-sm text-slate-500">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
-          Solving the schedule — this can take a few seconds…
+          Solving the schedule — this runs in the background, so it's safe
+          to keep working elsewhere and come back.
         </div>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {!loading && result && !solved && (
+      {failed && (
         <div className="max-w-xl rounded-lg border border-amber-300 bg-amber-50 p-5">
           <div className="font-medium text-amber-900">
             We couldn't build a conflict-free timetable
           </div>
-          <ul className="mt-2 list-disc pl-5 text-sm text-amber-800">
-            {result.errors.map((e, i) => (
-              <li key={i}>{e}</li>
-            ))}
-          </ul>
+          {/* error_message is newline-joined when the solver diagnosed one
+              or more specific causes (see _diagnose_infeasibility in
+              backend/app/services/solver.py) — rendered as a list so each
+              cause reads as its own point instead of a run-on sentence. */}
+          {(() => {
+            const lines = (timetable.error_message || 'Generation failed for an unknown reason.')
+              .split('\n')
+              .filter(Boolean)
+            if (lines.length > 1) {
+              return (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">
+                  {lines.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              )
+            }
+            return <p className="mt-2 text-sm text-amber-800">{lines[0]}</p>
+          })()}
         </div>
       )}
 
-      {!loading && solved && (
+      {solved && (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-md border border-slate-300 p-0.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex rounded-md border border-slate-300 p-0.5 text-xs">
+                <button
+                  onClick={() => setView('section')}
+                  className={`rounded px-3 py-1 ${view === 'section' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                >
+                  By Section
+                </button>
+                <button
+                  onClick={() => setView('teacher')}
+                  className={`rounded px-3 py-1 ${view === 'teacher' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                >
+                  By Teacher
+                </button>
+              </div>
+              {view === 'teacher' && (
+                <select
+                  value={selectedTeacherId ?? ''}
+                  onChange={(e) => setSelectedTeacherId(Number(e.target.value))}
+                  className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                >
+                  {teachers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400">Export:</span>
               <button
-                onClick={() => setView('section')}
-                className={`rounded px-3 py-1 ${view === 'section' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                onClick={() => api.downloadTimetableExport(timetable.id, 'xlsx').catch((err) => setError(err.message))}
+                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
               >
-                By Section
+                Excel
               </button>
               <button
-                onClick={() => setView('teacher')}
-                className={`rounded px-3 py-1 ${view === 'teacher' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                onClick={() => api.downloadTimetableExport(timetable.id, 'pdf').catch((err) => setError(err.message))}
+                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
               >
-                By Teacher
+                PDF
               </button>
             </div>
-            {view === 'teacher' && (
-              <select
-                value={selectedTeacherId ?? ''}
-                onChange={(e) => setSelectedTeacherId(Number(e.target.value))}
-                className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
 
           <div className="overflow-x-auto rounded-md border border-slate-200">
@@ -160,16 +310,41 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
                     {days.map((d) => {
                       const entry = entryFor(d, order)
                       const period = periodAt(d, order)
+                      const editable = view === 'section' && !readOnly
                       return (
-                        <td key={d} className="border border-slate-200 px-3 py-2">
+                        <td
+                          key={d}
+                          className={`border border-slate-200 px-3 py-2 ${editable ? 'align-top' : ''}`}
+                          onDragOver={editable ? (e) => e.preventDefault() : undefined}
+                          onDrop={editable ? () => handleDrop(d, order) : undefined}
+                        >
                           {!period ? (
                             <span className="text-slate-300">—</span>
                           ) : entry ? (
-                            <div>
-                              <div className="font-medium">{entry.subject_name}</div>
+                            <div
+                              draggable={editable && !entry.locked}
+                              onDragStart={editable ? () => setDragEntryId(entry.id) : undefined}
+                              onDragEnd={() => setDragEntryId(null)}
+                              className={editable && !entry.locked ? 'cursor-move' : ''}
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <div className="font-medium">{entry.subject_name}</div>
+                                {editable && (
+                                  <button
+                                    onClick={() => handleToggleLock(entry)}
+                                    title={entry.locked ? 'Unlock (movable, may change on regenerate)' : 'Lock (kept in place on regenerate)'}
+                                    className={`text-xs leading-none ${entry.locked ? 'text-amber-600' : 'text-slate-300 hover:text-slate-500'}`}
+                                  >
+                                    {entry.locked ? '🔒' : '🔓'}
+                                  </button>
+                                )}
+                              </div>
                               <div className="text-xs text-slate-500">
                                 {view === 'section' ? entry.teacher_name : `Sec ${classGroupName(entry.class_group_id)}`}
                               </div>
+                              {entry.room_name && (
+                                <div className="text-xs text-slate-400">{entry.room_name}</div>
+                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-slate-300">Free</span>
@@ -185,7 +360,7 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
         </div>
       )}
 
-      {!loading && !result && (
+      {!isGenerating && !timetable && (
         <div className="flex flex-col items-center justify-center gap-1 py-16 text-center text-slate-500">
           <p className="text-sm">No timetable generated yet for this school.</p>
           <p className="text-xs">Add subjects and constraints, then hit Generate.</p>

@@ -1,9 +1,10 @@
 # Timetable Generator
 
 A web application that generates conflict-free school timetables automatically.
-School administrators upload their data (teachers, classes, subjects, rooms,
+School administrators enter their data (teachers, classes, subjects, rooms,
 constraints) and the app produces an optimized, conflict-free schedule using a
-constraint solver — instead of building timetables by hand in a spreadsheet.
+real constraint solver — instead of building timetables by hand in a
+spreadsheet.
 
 ## Who this is for
 
@@ -11,21 +12,31 @@ Non-technical school administrators (initial target market: schools in India).
 The product philosophy is "simple surface, powerful engine": the UI stays
 minimal, and advanced scheduling rules are opt-in rather than required.
 
-## How it works (MVP flow)
+## How it works
 
-1. **Import** — admin uploads teacher/class/subject/room data via CSV or Excel.
-2. **Configure constraints** — admin describes scheduling rules in plain terms
-   (e.g. "Teacher X is unavailable on Fridays", "Math must not be the last
-   period for Grade 5").
-3. **Generate** — one click triggers the solver, which produces a complete
-   timetable satisfying all hard constraints and as many soft preferences as
-   possible.
-4. **Resolve conflicts** — if no fully valid schedule exists, the app shows
-   *why* (which constraints conflict) so the admin can adjust.
-5. **Lock & regenerate** — admin can lock parts of the schedule they like and
-   regenerate the rest.
-6. **Export** — download as PDF/Excel or push to existing school
-   calendar/ERP systems.
+1. **Land on the marketing page** — an unauthenticated visitor sees a proper
+   SaaS-style landing page (hero, features, pricing, testimonials) before the
+   login screen, not a bare login form.
+2. **Sign up** — email/password, or "Continue with Google" if Google sign-in
+   is configured (see `docs/DEPLOYMENT.md`).
+3. **Set up the school** — enter teachers, subjects, rooms, and periods by
+   hand, or bulk-import from a CSV/Excel spreadsheet.
+4. **Describe scheduling rules in plain English** — e.g. "Math can't follow
+   PE," "Mr. Rao should not teach more than 3 periods in a row," "No PE on
+   Fridays." An LLM (Claude, with a regex fallback when no API key is set)
+   turns these into real constraints the solver enforces.
+5. **Generate** — one click runs the solver for the *whole school* at once
+   (every section and every shared teacher together, so there are no
+   cross-section conflicts) and produces a complete timetable, including room
+   assignment.
+6. **Resolve conflicts** — if no fully valid schedule exists, the app
+   diagnoses the specific cause (an overloaded teacher, an over-subscribed
+   section) instead of just saying "infeasible."
+7. **Fine-tune** — drag a period to move it, lock a slot so it survives the
+   next regeneration, or swap two classes in one move.
+8. **Export** — download the timetable as Excel or PDF.
+9. **Bring your team in** — invite an office admin or vice principal (full
+   access) or a read-only viewer to the same school.
 
 ## Tech stack
 
@@ -33,14 +44,16 @@ minimal, and advanced scheduling rules are opt-in rather than required.
 |---|---|---|
 | Solver | Google OR-Tools (CP-SAT) | Purpose-built constraint solver; handles hard + soft scheduling constraints well |
 | Backend | Python + FastAPI | Best-supported language for OR-Tools; FastAPI gives free auto-generated API docs |
-| Frontend | React + Tailwind CSS | Component-based UI, fast to style, widely supported |
-| Database | PostgreSQL | Relational data (schools, teachers, classes, constraints) with strong consistency guarantees |
-| Import/Export | SheetJS (xlsx) | Reads/writes Excel files in-browser and on the server |
-| Hosting | Railway or Render | Simple deploys for a Postgres + API + static frontend stack |
+| Frontend | React + Tailwind CSS + Framer Motion | Component-based UI, fast to style, widely supported |
+| Constraint parsing | Anthropic Claude (regex fallback) | Understands free-text scheduling rules without a rigid input form |
+| Database | PostgreSQL (SQLite for local dev) | Relational data with strong consistency guarantees; Supabase's free tier works well for a hosted Postgres instance — see `docs/DEPLOYMENT.md` |
+| Auth | JWT (email/password) + optional Google sign-in | Standard token auth; Google sign-in is additive, not required |
+| Import/Export | openpyxl, reportlab | Reads/writes Excel and PDF files server-side |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit
-together, and [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) to run the
-project locally.
+together, [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) to run the
+project locally, and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for setting
+up a free hosted database and Google sign-in.
 
 ## Project structure
 
@@ -48,108 +61,59 @@ project locally.
 timetable-app/
 ├── backend/          FastAPI application + OR-Tools solver
 │   ├── app/
-│   │   ├── core/         config, database connection
-│   │   ├── models/       SQLAlchemy database models
+│   │   ├── core/          config, database connection, auth, access control
+│   │   ├── models/        SQLAlchemy database models
 │   │   ├── schemas/       Pydantic request/response schemas
-│   │   ├── routers/      API endpoints
-│   │   └── services/     business logic, incl. the solver service
+│   │   ├── routers/       API endpoints
+│   │   └── services/      business logic: solver, constraint parsing, bulk import, export
 │   └── tests/
-├── frontend/          React + Tailwind admin UI
-└── docs/              Architecture and setup documentation
+├── frontend/          React + Tailwind admin UI + marketing landing page
+└── docs/              Architecture, setup, and deployment documentation
 ```
 
-## API endpoints (current)
+## Key features
 
-Full interactive docs (try-it-out included) are at `/docs` once the backend
-is running. Currently available:
+- **Plain-English constraints** — day-specific placement rules, teacher and
+  subject consecutive-period limits, minimum gaps between subjects,
+  subject-sequence rules ("Math can't follow PE"), availability, and
+  workload limits — all describable as a sentence, parsed by an LLM with a
+  regex fallback.
+- **Real optimization, not a heuristic** — Google OR-Tools' CP-SAT solver,
+  the same class of technology used for airline crew scheduling.
+- **Room assignment** — the solver assigns rooms (respecting required room
+  types like "Lab" or "Gym"), not just teacher/period slots.
+- **Bulk import** — upload teachers, subjects, rooms, and class groups from
+  CSV/Excel instead of typing them in one at a time.
+- **Manual editing that survives regeneration** — drag-and-drop, lock
+  individual slots, atomic swaps between two filled slots.
+- **Infeasibility diagnostics** — when generation fails, the app identifies
+  the specific overloaded teacher or over-subscribed section, not just
+  "no solution found."
+- **Multi-admin schools with roles** — invite colleagues by email as full
+  admins or read-only viewers; every school-scoped endpoint checks
+  membership before allowing access.
+- **Export** — Excel and PDF, ready for the staff room wall.
+- **Marketing landing page** — hero, feature grid, pricing, testimonials,
+  and Aceternity/Magic UI-style visual flourishes (spotlight glow, grid
+  background, marquee, cursor-tracking glow cards), all hand-built with
+  Tailwind + Framer Motion.
 
-- `/api/auth/signup`, `/api/auth/login`, `/api/auth/me` — email/password
-  auth, returns a JWT used as `Authorization: Bearer <token>` on every
-  other request
-- `/api/schools` — create/list/get, scoped to the logged-in user
-  (`owner_id`)
-- `/api/subjects`, `/api/rooms`, `/api/periods`, `/api/teachers`,
-  `/api/class-groups`, `/api/constraints` — full CRUD (create, list, get,
-  update, delete), each filterable by `?school_id=`. Class groups also
-  carry a `grade` field (e.g. "Grade 8") for the Grade > Section hierarchy.
-- `/api/class-groups/{id}/requirements` — how many periods/week a class
-  group needs of a subject (nested under class groups)
-- `/api/constraints/parse` (POST) — turns plain-English constraint text
-  into a structured Constraint row; see "NLP constraints" below
-- `/api/timetables/generate?school_id=` (POST) — runs the real solver
-  against a school's teachers/class groups/subject requirements/periods
-  and saves the result as a draft timetable
-- `/api/timetables/{id}` and `/api/timetables?school_id=` — fetch a
-  generated timetable with human-readable names filled in
-- `/api/solver/test` — diagnostic endpoint that runs a small built-in
-  OR-Tools example, useful to confirm the solver install works
+## Not yet built
 
-Not yet built: Google sign-in (needs an OAuth client only you can create),
-CSV/Excel bulk import, room assignment in the generated timetable
-(room_id is left null for now).
-
-## NLP constraints
-
-`/api/constraints/parse` (`app/services/constraint_parser.py`) is a
-pattern-matching parser — not an LLM call — that recognizes common
-phrasings: "max N periods a week" (→ workload limit), day/availability
-words (→ availability), everything else (→ generic scheduling rule). It
-also tries to match a teacher by name against the school's teacher list.
-
-Only **workload limit** constraints with a matched teacher are actually
-enforced right now — the parser sets `Teacher.max_periods_per_week`
-directly, which the solver already respects. Availability and generic
-rules are recorded (visible in the Constraints tab) but not yet fed into
-the CP-SAT model — the UI says so on each card. Swapping the parser for a
-real LLM call later doesn't require touching anything else, since the
-input/output shape stays the same.
-
-## Frontend screens (current)
-
-The admin UI matches the uploaded design: auth screen, then a Grade >
-Section sidebar with four tabs per section.
-
-- **Auth** — real email/password login and signup. "Continue with Google"
-  is shown but disabled (needs Google OAuth credentials from you first).
-- **Sidebar** — school switcher plus a Grade > Section tree built from
-  class groups; "+ Add" creates a new grade/section on the fly.
-- **Overview** — 3-step status summary (data entry → constraints →
-  generate) with quick links into each tab.
-- **Data Entry** — one table: subjects, periods/week for the selected
-  section, and which teacher(s) are qualified for each subject (chips +
-  dropdown). Includes a one-click "Quick setup: Mon–Fri, 8 periods/day" for
-  schools that don't have periods configured yet.
-- **Constraints** — the NLP input described above, rendered as removable
-  cards.
-- **Timetable** — "Generate Timetable" solves for the *whole school* at
-  once (every section + every shared teacher together, so there are no
-  cross-section conflicts), then displays the result as a day × period
-  grid with a By Section / By Teacher toggle.
-
-See `frontend/src/api.js` for the full list of API calls the UI makes, and
-`frontend/src/components/` for each screen. A few older components
-(`SubjectsPanel`, `TeachersPanel`, `ClassGroupsPanel`, `RoomsPanel`,
-`TimetablePanel`) are left in place but unused/superseded — each has a
-comment saying so and is safe to delete.
+Billing/payments (pricing on the landing page is illustrative), automated
+tests/CI, error monitoring, and a formal security review ahead of handling
+real customer data at scale. See the "production ready" conversation this
+was built alongside for the fuller list.
 
 ## Status
 
-Full auth (signup/login/JWT) is in place, schools are scoped to their
-owner, and the frontend matches the uploaded design end-to-end: sidebar
-grade/section tree, combined subjects+teachers data entry, NLP-style
-constraint input, and a generate flow with By Section / By Teacher views.
-The real solver reads a school's actual data from the database, builds a
-CP-SAT model (subject requirements met exactly, no teacher/class
-double-booking, teacher max-hours respected — including hours set via the
-constraint parser), and either returns a conflict-free schedule or a
-clear reason it couldn't. Everything has been verified against the real
-backend through the same dev-server proxy path the browser uses,
-including auth, ownership scoping, and constraint parsing actually
-affecting generation output. Scope is intentionally generic (not locked
-to one curriculum or school type yet) — see `docs/ARCHITECTURE.md` for
-the data model reasoning and open decisions.
-
-Next up, roughly in priority order: Google sign-in (once you've created
-OAuth credentials), CSV/Excel bulk import, wiring availability/scheduling-
-rule constraints into the solver (only workload limits are enforced
-today), and room assignment.
+The full flow works end-to-end against a real backend: landing page → auth
+(email/password or Google) → school setup (manual or bulk-imported) →
+plain-English constraints → generation via CP-SAT → manual editing → export.
+Multiple admins per school and read-only viewers are supported with real
+access-control checks on every endpoint, not just UI-level hiding. The app
+runs on SQLite locally by default and can point at a free hosted Supabase
+Postgres instance via `DATABASE_URL` with no code changes. Scope is
+intentionally generic (not locked to one curriculum or school type) — see
+`docs/ARCHITECTURE.md` for the data model reasoning and the full history of
+what's been built and why.

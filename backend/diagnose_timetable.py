@@ -100,6 +100,8 @@ def main():
                         teacher_totals[t["id"]] += r["periods_per_week"] / max(len(qualified_teacher_ids), 1)
 
                 flag = " <-- NO QUALIFIED TEACHER" if not qualified_teacher_ids else ""
+                if subj_name.startswith("#"):
+                    flag += " <-- ORPHANED (subject was deleted; run dedupe_orphaned_requirements.py)"
                 print(f"  - {subj_name}: {r['periods_per_week']}/week{flag}")
 
             status = "OK" if total_periods_needed <= len(periods) else "*** EXCEEDS AVAILABLE PERIODS ***"

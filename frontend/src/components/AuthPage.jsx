@@ -1,21 +1,84 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, setToken } from '../api'
+
+// Set by whoever deploys this (see docs/DEPLOYMENT.md) after creating a
+// Google Cloud OAuth 2.0 Client ID. Left blank in local dev by default —
+// the button below simply doesn't render when it's unset, rather than
+// showing a broken "Sign in with Google" that fails on click.
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 
 /**
  * Login / signup screen. Email+password is fully functional. Google
- * sign-in is shown (per the design) but marked "coming soon" — it needs a
- * Google Cloud OAuth client (client ID/secret) that only the project owner
- * can create; wiring it up later is an additive change, not a rework.
+ * sign-in uses Google Identity Services' hosted button (loaded from
+ * accounts.google.com at runtime, not bundled) rather than a hand-built
+ * button — Google requires their own rendered button/prompt for the ID
+ * token flow used here, so this isn't stylistic, it's how the flow works.
+ * The resulting ID token is verified server-side in
+ * backend/app/routers/auth.py's /auth/google endpoint, never trusted
+ * as-is from the client.
  */
-export default function AuthPage({ onAuthenticated }) {
+export default function AuthPage({ onAuthenticated, onBack }) {
   const [mode, setMode] = useState('login') // 'login' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const googleButtonRef = useRef(null)
 
   const isLogin = mode === 'login'
+
+  async function handleGoogleCredential(response) {
+    setError(null)
+    setLoading(true)
+    try {
+      const result = await api.loginWithGoogle(response.credential)
+      setToken(result.access_token)
+      onAuthenticated(result.user)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Loads Google's script once, initializes it with our client ID, and
+  // renders its button into googleButtonRef. Skipped entirely if no
+  // client ID is configured — see GOOGLE_CLIENT_ID above.
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return
+
+    let cancelled = false
+
+    function render() {
+      if (cancelled || !window.google || !googleButtonRef.current) return
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleCredential,
+      })
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        width: 328,
+        text: 'continue_with',
+      })
+    }
+
+    if (window.google?.accounts?.id) {
+      render()
+    } else {
+      const script = document.createElement('script')
+      script.src = 'https://accounts.google.com/gsi/client'
+      script.async = true
+      script.onload = render
+      document.head.appendChild(script)
+    }
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -38,7 +101,16 @@ export default function AuthPage({ onAuthenticated }) {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-8">
       <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
         <div className="mb-6 text-center">
-          <div className="text-lg font-semibold text-slate-900">Timetable</div>
+          {onBack ? (
+            <button
+              onClick={onBack}
+              className="mb-3 text-sm font-semibold text-slate-900 hover:text-slate-600"
+            >
+              ← Timetable
+            </button>
+          ) : (
+            <div className="text-lg font-semibold text-slate-900">Timetable</div>
+          )}
           <h1 className="mt-2 text-2xl font-semibold">
             {isLogin ? 'Welcome back' : 'Create your account'}
           </h1>
@@ -49,26 +121,16 @@ export default function AuthPage({ onAuthenticated }) {
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled
-          title="Google sign-in is coming soon"
-          className="mb-4 flex w-full cursor-not-allowed items-center justify-center gap-2.5 rounded-md border border-slate-300 py-2.5 text-sm font-medium text-slate-400"
-        >
-          <svg width="17" height="17" viewBox="0 0 48 48">
-            <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35 24 35c-6.1 0-11-4.9-11-11s4.9-11 11-11c2.8 0 5.3 1.1 7.3 2.8l5.7-5.7C33.6 6.5 29 4.5 24 4.5 13.2 4.5 4.5 13.2 4.5 24S13.2 43.5 24 43.5 43.5 34.8 43.5 24c0-1.2-.1-2.3-.4-3.5z" />
-            <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.6 15.9 18.9 13 24 13c2.8 0 5.3 1.1 7.3 2.8l5.7-5.7C33.6 6.5 29 4.5 24 4.5c-7.6 0-14.1 4.3-17.5 10.6z" />
-            <path fill="#4CAF50" d="M24 43.5c5 0 9.5-1.9 12.9-5l-6-5c-2 1.4-4.5 2.2-6.9 2.2-5.3 0-9.7-3.4-11.3-8l-6.6 5.1C9.8 39.1 16.3 43.5 24 43.5z" />
-            <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l6 5C40.5 35.7 43.5 30.4 43.5 24c0-1.2-.1-2.3-.4-3.5z" />
-          </svg>
-          Continue with Google (coming soon)
-        </button>
-
-        <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
-          <div className="h-px flex-1 bg-slate-200" />
-          or
-          <div className="h-px flex-1 bg-slate-200" />
-        </div>
+        {GOOGLE_CLIENT_ID ? (
+          <>
+            <div className="mb-4 flex justify-center" ref={googleButtonRef} />
+            <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />
+              or
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+          </>
+        ) : null}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {!isLogin && (

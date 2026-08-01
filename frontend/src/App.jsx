@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { api, getToken, setToken } from './api'
+import LandingPage from './components/LandingPage'
 import AuthPage from './components/AuthPage'
+import AcceptInvitePage from './components/AcceptInvitePage'
 import Sidebar from './components/Sidebar'
+import FirstRunWelcome from './components/FirstRunWelcome'
 import OverviewTab from './components/OverviewTab'
 import DataEntryTab from './components/DataEntryTab'
 import ConstraintsTab from './components/ConstraintsTab'
 import TimetableTab from './components/TimetableTab'
+import TeamTab from './components/TeamTab'
 
-const TABS = [
+const BASE_TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'entry', label: 'Data Entry' },
   { id: 'constraints', label: 'Constraints' },
@@ -30,6 +34,20 @@ function App() {
   const [teachers, setTeachers] = useState([])
   const [tab, setTab] = useState('overview')
   const [error, setError] = useState(null)
+  // Unauthenticated visitors see LandingPage.jsx first (marketing page,
+  // "Get started"/"Sign in" CTAs), not straight-to-login — this flips to
+  // true once one of those is clicked, revealing AuthPage. Reset to false
+  // on logout so signing out lands back on the marketing page, not a bare
+  // login form.
+  const [showAuth, setShowAuth] = useState(false)
+
+  // This app has no client-side router (see AcceptInvitePage.jsx's
+  // docstring) — an invite link is just `?invite=<token>` on the same
+  // URL, checked once on load. Kept in state (not re-read from the URL
+  // on every render) so it doesn't reappear if the user navigates within
+  // the app after accepting/dismissing it.
+  const [inviteToken] = useState(() => new URLSearchParams(window.location.search).get('invite'))
+  const [inviteHandled, setInviteHandled] = useState(false)
 
   // On load, if a token is already stored, validate it via /auth/me instead
   // of bouncing straight to the login screen.
@@ -114,16 +132,36 @@ function App() {
     setSelectedSchoolId(null)
     setClassGroups([])
     setSelectedClassGroupId(null)
+    setShowAuth(false)
+  }
+
+  function handleInviteAccepted(acceptedUser) {
+    setInviteHandled(true)
+    // Drop the ?invite=... param so refreshing/navigating later doesn't
+    // re-show this screen — replaceState rather than a real navigation
+    // since there's no router to do it "properly" with.
+    window.history.replaceState(null, '', window.location.pathname)
+    setUser(acceptedUser)
+  }
+
+  if (inviteToken && !inviteHandled) {
+    return <AcceptInvitePage token={inviteToken} onAccepted={handleInviteAccepted} />
   }
 
   if (checkingSession) return null
 
   if (!user) {
-    return <AuthPage onAuthenticated={setUser} />
+    return showAuth ? (
+      <AuthPage onAuthenticated={setUser} onBack={() => setShowAuth(false)} />
+    ) : (
+      <LandingPage onGetStarted={() => setShowAuth(true)} />
+    )
   }
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId)
   const selectedClassGroup = classGroups.find((c) => c.id === selectedClassGroupId)
+  const isViewer = selectedSchool?.role === 'viewer'
+  const TABS = selectedSchool?.role === 'admin' ? [...BASE_TABS, { id: 'team', label: 'Team' }] : BASE_TABS
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
@@ -138,6 +176,7 @@ function App() {
           selectedClassGroupId={selectedClassGroupId}
           onSelectClassGroup={setSelectedClassGroupId}
           onAddClassGroup={handleAddClassGroup}
+          readOnly={isViewer}
         />
       ) : null}
 
@@ -150,6 +189,11 @@ function App() {
               <span className="text-slate-500">{selectedClassGroup.grade || 'Ungrouped'}</span>
               <span className="text-slate-300">›</span>
               <span className="font-semibold">Section {selectedClassGroup.name}</span>
+              {isViewer && (
+                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                  View only
+                </span>
+              )}
             </div>
           ) : (
             <span className="mr-4 text-sm text-slate-500">
@@ -190,26 +234,47 @@ function App() {
 
           {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
+          {selectedSchool && !selectedClassGroup && (
+            isViewer ? (
+              <p className="text-sm text-slate-500">
+                {selectedSchool.name} doesn't have any grades/sections set up yet. An admin needs
+                to add one before there's anything here to view.
+              </p>
+            ) : (
+              <FirstRunWelcome schoolName={selectedSchool.name} onAddClassGroup={handleAddClassGroup} />
+            )
+          )}
+
           {selectedSchool && selectedClassGroup && (
             <>
               {tab === 'overview' && (
                 <OverviewTab
                   schoolId={selectedSchoolId}
+                  classGroupId={selectedClassGroupId}
                   classGroup={selectedClassGroup}
                   onNavigate={setTab}
                 />
               )}
               {tab === 'entry' && (
-                <DataEntryTab schoolId={selectedSchoolId} classGroupId={selectedClassGroupId} />
+                <DataEntryTab
+                  schoolId={selectedSchoolId}
+                  classGroupId={selectedClassGroupId}
+                  onClassGroupsChanged={() => loadSchoolData(selectedSchoolId)}
+                  readOnly={isViewer}
+                />
               )}
-              {tab === 'constraints' && <ConstraintsTab schoolId={selectedSchoolId} />}
+              {tab === 'constraints' && <ConstraintsTab schoolId={selectedSchoolId} readOnly={isViewer} />}
               {tab === 'timetable' && (
                 <TimetableTab
                   schoolId={selectedSchoolId}
                   classGroup={selectedClassGroup}
                   classGroups={classGroups}
                   teachers={teachers}
+                  readOnly={isViewer}
                 />
+              )}
+              {tab === 'team' && selectedSchool?.role === 'admin' && (
+                <TeamTab schoolId={selectedSchoolId} />
               )}
             </>
           )}

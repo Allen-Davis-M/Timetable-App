@@ -1,0 +1,102 @@
+import { useState } from 'react'
+
+/**
+ * Shown instead of the tab area when a school has zero grades/sections yet
+ * (App.jsx: `selectedSchool && !selectedClassGroup`). This exists because
+ * every other tab (Overview, Data Entry, Constraints, Timetable) needs a
+ * selected class group to render anything meaningful — Data Entry's
+ * "requirements" list, Overview's checklist, and Timetable's grid are all
+ * scoped to one section — so a school with no sections at all previously
+ * just saw a tiny "Add a grade/section to get started" hint buried in the
+ * header, with no explanation of what happens after that, or why a
+ * section has to exist before periods/subjects/teachers (which are
+ * actually school-wide, not per-section) can be entered.
+ *
+ * This screen front-loads that explanation and puts the same "add a
+ * grade/section" form Sidebar.jsx already has front and center instead of
+ * as a small "+ Add" toggle, so a brand-new admin's very first action has
+ * an obvious, unmissable place to happen. Once a section is added, App.jsx
+ * selects it automatically and OverviewTab's checklist takes over guiding
+ * the rest of the setup (periods -> subjects & teachers -> this section's
+ * requirements -> constraints (optional) -> generate).
+ */
+export default function FirstRunWelcome({ schoolName, onAddClassGroup }) {
+  const [grade, setGrade] = useState('')
+  const [section, setSection] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!grade.trim() || !section.trim()) return
+    setSubmitting(true)
+    try {
+      await onAddClassGroup(grade.trim(), section.trim())
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="mx-auto flex max-w-xl flex-col gap-6">
+      <div>
+        <h2 className="text-xl font-semibold">Welcome to {schoolName}</h2>
+        <p className="mt-1.5 text-sm text-slate-500">
+          A timetable is built one grade/section at a time. Add your first one below to get
+          started — you'll fill in periods, subjects, and teachers right after.
+        </p>
+      </div>
+
+      <ol className="flex flex-col gap-2 text-sm text-slate-500">
+        <li className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">1</span>
+          Add a grade and section (e.g. "Grade 8" / "A") — right here
+        </li>
+        <li className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-500">2</span>
+          Set up periods, subjects, and teachers for the school
+        </li>
+        <li className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-500">3</span>
+          Say how many periods/week this section needs of each subject
+        </li>
+        <li className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-500">4</span>
+          Generate the timetable
+        </li>
+      </ol>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-5">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-slate-500">Grade</label>
+          <input
+            value={grade}
+            onChange={(e) => setGrade(e.target.value)}
+            placeholder="Grade 8"
+            autoFocus
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-slate-500">Section</label>
+          <input
+            value={section}
+            onChange={(e) => setSection(e.target.value)}
+            placeholder="A"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+        </div>
+        <button
+          disabled={submitting || !grade.trim() || !section.trim()}
+          className="mt-1 w-fit rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {submitting ? 'Adding…' : 'Add section and continue'}
+        </button>
+      </form>
+
+      <p className="text-xs text-slate-400">
+        Have more than one grade/section? Add the rest later from the sidebar — one is enough to
+        get started.
+      </p>
+    </div>
+  )
+}

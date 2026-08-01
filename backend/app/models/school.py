@@ -55,6 +55,10 @@ class Subject(Base):
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
     name = Column(String, nullable=False)
+    # If set, the solver will only assign this subject to a Room whose
+    # room_type matches exactly (e.g. "lab" for Chemistry). Null means any
+    # room is fine — most subjects don't need a specific room type.
+    required_room_type = Column(String, nullable=True)
 
     school = relationship("School", back_populates="subjects")
 
@@ -155,12 +159,22 @@ class Constraint(Base):
 
 
 class Timetable(Base):
-    """A generated schedule (one solver run's output)."""
+    """A generated schedule (one solver run's output).
+
+    Generation runs as a background job (see app/routers/timetables.py)
+    rather than blocking the HTTP request that kicked it off — a solve can
+    legitimately take up to a minute for a large school, which is too long
+    to hold a request open. `status` tracks the job lifecycle:
+    "generating" -> "draft" (succeeded) or "failed". `solver_status` and
+    `error_message` record what CP-SAT actually reported, for display.
+    """
     __tablename__ = "timetables"
 
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
-    status = Column(String, default="draft")  # draft, published, archived
+    status = Column(String, default="generating")  # generating, draft, failed, published, archived
+    solver_status = Column(String, nullable=True)  # optimal, feasible, infeasible, unknown, no_periods, ...
+    error_message = Column(Text, nullable=True)
 
     entries = relationship("TimetableEntry", back_populates="timetable", cascade="all, delete-orphan")
 
@@ -179,3 +193,59 @@ class TimetableEntry(Base):
     locked = Column(Boolean, default=False)  # admin locked this slot before regenerating
 
     timetable = relationship("Timetable", back_populates="entries")
+
+
+class SchoolMembership(Base):
+    """
+    A second admin/viewer login for a school, on top of School.owner_id.
+
+    The owner (School.owner_id) is always an implicit "admin" member, even
+    with no row here — this table only needs to exist for *additional*
+    users, so a freshly created school with a single owner works exactly
+    as before with zero rows in this table (see
+    app/core/access.get_membership_role for where that implicit-owner
+    check lives, right alongside the explicit-row lookup). Rows here are
+    normally created by accepting an invite (see SchoolInvite below), not
+    directly.
+
+    Roles are deliberately just two tiers for now: "admin" (everything the
+    owner can do, including inviting/removing other members) and "viewer"
+    (read-only — every mutating endpoint rejects a viewer with 403, see
+    app/core/access.require_school_access). See docs/ARCHITECTURE.md for
+    why finer-grained permissions were left out of this first pass.
+    """
+    __tablename__ = "school_memberships"
+    __table_args__ = (UniqueConstraint("school_id", "user_id", name="uq_membership_school_user"),)
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role = Column(String, nullable=False, default="viewer")  # "admin" | "viewer"
+
+    school = relationship("School")
+    user = relationship("User")
+
+
+class SchoolInvite(Base):
+    """
+    A pending invitation for someone (identified by email, not yet
+    necessarily a User row) to join a school with a given role. Created by
+    an existing admin (POST /api/schools/{id}/invites), consumed by
+    POST /api/invites/{token}/accept — which creates the User row too if
+    the invited email hasn't signed up yet, so an admin can invite a
+    colleague who's never used the app before. `token` is the only thing
+    the invite link needs to carry; it's long and random specifically so
+    it's safe to put in a URL and email (see app/routers/invites.py for
+    how it's generated).
+    """
+    __tablename__ = "school_invites"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    email = Column(String, nullable=False, index=True)
+    role = Column(String, nullable=False, default="viewer")  # "admin" | "viewer"
+    token = Column(String, nullable=False, unique=True, index=True)
+    invited_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status = Column(String, nullable=False, default="pending")  # "pending" | "accepted" | "revoked"
+
+    school = relationship("School")

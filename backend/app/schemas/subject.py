@@ -4,10 +4,12 @@ from pydantic import BaseModel, ConfigDict
 class SubjectCreate(BaseModel):
     school_id: int
     name: str
+    required_room_type: str | None = None
 
 
 class SubjectUpdate(BaseModel):
-    name: str
+    name: str | None = None
+    required_room_type: str | None = None
 
 
 class SubjectOut(BaseModel):
@@ -16,3 +18,4 @@ class SubjectOut(BaseModel):
     id: int
     school_id: int
     name: str
+    required_room_type: str | None

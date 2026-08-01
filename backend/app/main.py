@@ -17,6 +17,7 @@ from app.routers import (
     auth,
     class_groups,
     constraints,
+    invites,
     periods,
     rooms,
     schools,
@@ -42,6 +43,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(schools.router)
+app.include_router(invites.router)
 app.include_router(subjects.router)
 app.include_router(rooms.router)
 app.include_router(periods.router)

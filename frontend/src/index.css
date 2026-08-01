@@ -3,3 +3,24 @@
 body {
   margin: 0;
 }
+
+/* Marquee + glow keyframes for LandingPage.jsx's Aceternity/Magic-UI-style
+   flourishes (see components/Marquee.jsx, components/Spotlight.jsx).
+   Tailwind v4 is CSS-first (no tailwind.config.js keyframes block), so
+   these live here and are referenced via the .animate-marquee* utility
+   classes below rather than a `theme.extend.keyframes` entry. */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.05); }
+}
+
+.animate-marquee {
+  animation: marquee var(--marquee-duration, 28s) linear infinite;
+}
+.animate-glow-pulse {
+  animation: glow-pulse 6s ease-in-out infinite;
+}

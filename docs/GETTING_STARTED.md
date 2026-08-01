@@ -10,7 +10,11 @@
 ## If you're upgrading from an older copy of this project
 
 The database schema changed (added `users`, `schools.owner_id`,
-`class_groups.grade`). SQLite's auto-create-on-startup only creates
+`class_groups.grade`, `timetables.solver_status` / `timetables.error_message`
+for the async generation job, `timetable_entries.room_id` for room
+assignment, and — most recently — `subjects.required_room_type`, used to
+match a subject to a room when the solver assigns rooms).
+SQLite's auto-create-on-startup only creates
 *missing* tables — it won't add new columns to ones that already exist. If
 you already have a `backend/dev.db` from before, **delete it** before
 starting the backend again:
@@ -71,6 +75,19 @@ that is NOT secret (see `app/core/config.py`). That's fine for local dev.
 Before deploying anywhere real, set `JWT_SECRET` in `.env` to a long
 random string — anyone who knows the default can forge login tokens.
 
+### Note on LLM-based constraint parsing
+
+The Constraints tab's free-text parsing tries Claude first and falls back
+to a regex parser if it can't. To turn on the Claude path, set
+`ANTHROPIC_API_KEY` in `.env` (get one at console.anthropic.com). Without
+it, constraint entry still works — it just recognizes a narrower set of
+fixed phrasings (see `app/services/constraint_parser.py`) instead of
+Claude's much more flexible natural-language understanding, and won't
+pick up on scoping a rule to one grade/section or consecutive-period
+limits. `llm_model` in `app/core/config.py` controls which Claude model is
+used (defaults to a fast/cheap one, since each constraint is a small,
+well-defined extraction task).
+
 ## 2. Frontend
 
 If you don't already have `node_modules` (it's gitignored, so you won't
@@ -107,12 +124,50 @@ the same Railway/Render deployment) can serve.
    the sidebar ("+ Add" under Grades & sections).
 5. In **Data Entry**, click "Quick setup: Mon–Fri, 8 periods/day" if no
    periods exist yet, then add a subject, set its periods/week, and assign
-   a teacher.
+   a teacher. For more than a couple of subjects/teachers/rooms, use the
+   "Bulk import" box at the bottom instead — download the template for
+   whichever kind you're adding, fill it in, and upload the CSV or Excel
+   file.
 6. In **Constraints**, try typing something like "Priya Sharma can only
    teach 10 periods a week" and confirm a card appears.
-7. In **Timetable**, click "Generate Timetable" — you should see a
-   conflict-free weekly grid. Toggle "By Teacher" to see a teacher's
-   schedule across every section they teach.
+7. In **Timetable**, click "Generate Timetable". Generation runs as a
+   background job on the server (see "Note on timetable generation"
+   below), so the button shows "Generating…" and the frontend polls
+   until it's done — you should then see a conflict-free weekly grid.
+   Toggle "By Teacher" to see a teacher's schedule across every section
+   they teach.
+8. Once solved, use the **Export** links (Excel / PDF) to download the
+   whole school's timetable — every section and every teacher, one
+   sheet/page each — as a file you can print or email out.
+9. In the **By Section** view, you can hand-edit the result: drag a slot
+   to a different cell to move it (rejected with an error if it would
+   double-book the class, teacher, or room), or click the lock icon on a
+   slot to pin it in place — a locked slot stays exactly where it is the
+   next time you click "Generate Timetable", instead of being re-solved
+   along with everything else.
+
+### Note on timetable generation
+
+`POST /api/timetables/generate` returns immediately (status
+`"generating"`) instead of waiting for the solve to finish — for a large
+school the CP-SAT solve can legitimately take up to a minute
+(`solver_time_limit_seconds` in `.env`, default 60s), which is too long to
+hold an HTTP request open safely. The frontend polls
+`GET /api/timetables/{id}` every 1.5s until `status` becomes `"draft"`
+(succeeded) or `"failed"` (see `error_message` for why). If you're calling
+the API directly (e.g. from a script), do the same: poll instead of
+expecting a result from the `/generate` call itself.
+
+### Note on exporting timetables
+
+`GET /api/timetables/{id}/export?format=xlsx` or `?format=pdf`
+(`app/services/export.py`) downloads the whole school's timetable as one
+file: a sheet (Excel) or page (PDF) per section, followed by one per
+teacher. It only works once a timetable's `status` is `"draft"`
+(successfully generated) — trying to export a `"generating"` or `"failed"`
+one returns a 400 with an explanatory message. There's no per-section or
+per-teacher export yet (that'd be a query param addition to the same
+endpoint if you want it later); today it's always the full set.
 
 ## Next steps
 
@@ -124,13 +179,17 @@ gaps, in rough priority order:
    already reserved for it.
 2. **CSV/Excel bulk import** so admins aren't entering subjects/teachers
    one row at a time.
-3. **Wiring the generic Constraint table's other types into the solver** —
-   today only `workload_limit` constraints are actually enforced (via
-   `Teacher.max_periods_per_week`); `availability` and `scheduling_rule`
-   constraints are recorded but not yet applied to the CP-SAT model.
-4. **A real NLP parser** — `app/services/constraint_parser.py` is
-   pattern-matching, not an LLM. Swapping in a real language model (e.g.
-   Claude) for more flexible phrasing is a drop-in replacement — same
-   input/output shape, just a smarter implementation — once there's an API
-   key to use for it.
-5. **Room assignment** in the generated timetable (currently left null).
+3. **The `scheduling_rule` catch-all constraint type** — `workload_limit`,
+   `availability` (by day), subject-period-position (first/last period,
+   optionally scoped to a grade/section), and `max_consecutive_periods`
+   are all enforced now; anything that doesn't map to one of those —
+   room-based rules, rules spanning multiple subjects, etc. — is recorded
+   but not applied. See "Constraint types and what's actually enforced" in
+   ARCHITECTURE.md.
+4. **Room assignment** in the generated timetable (currently left null).
+
+Pinning a preferred teacher per section (`preferred_teacher_id`) — the
+single biggest lever for generating large schools quickly, per the
+scale-testing table above — now has a UI: the Data Entry tab shows a
+picker under a subject's teacher chips whenever more than one teacher is
+qualified for it.

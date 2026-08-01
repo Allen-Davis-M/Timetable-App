@@ -45,15 +45,78 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+// Separate from request() because a plain <a href> download can't attach
+// an Authorization header — and every /api endpoint now requires one,
+// including exports (see app/core/access.py's require_school_access
+// rollout across every router). Fetches the file with auth, then
+// triggers a save exactly like a normal link would have, via a temporary
+// blob URL and a synthetic click.
+async function downloadFile(path, filename) {
+  const token = getToken();
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`/api${path}`, { headers });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const b = await res.json();
+      detail = b.detail ? JSON.stringify(b.detail) : detail;
+    } catch {
+      // not JSON
+    }
+    throw new Error(`${res.status} ${detail}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Separate from request() because bulk-import posts multipart/form-data
+// (a file, not JSON) — must NOT set a Content-Type header (the browser
+// sets its own with the multipart boundary) or the upload gets mangled.
+async function uploadFile(path, schoolId, file) {
+  const token = getToken();
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const body = new FormData();
+  body.append("school_id", schoolId);
+  body.append("file", file);
+
+  const res = await fetch(`/api${path}`, { method: "POST", headers, body });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const b = await res.json();
+      detail = b.detail ? JSON.stringify(b.detail) : detail;
+    } catch {
+      // not JSON
+    }
+    throw new Error(`${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
 const get = (path) => request(path);
 const post = (path, body) => request(path, { method: "POST", body: JSON.stringify(body) });
 const put = (path, body) => request(path, { method: "PUT", body: JSON.stringify(body) });
+const patch = (path, body) => request(path, { method: "PATCH", body: JSON.stringify(body) });
 const del = (path) => request(path, { method: "DELETE" });
 
 export const api = {
   // Auth
   signup: (data) => post("/auth/signup", data),
   login: (data) => post("/auth/login", data),
+  // `credential` is the ID token Google's Sign-In button hands back via
+  // its callback — see components/AuthPage.jsx and
+  // backend/app/routers/auth.py's /auth/google endpoint, which verifies
+  // it server-side rather than trusting it as-is.
+  loginWithGoogle: (credential) => post("/auth/google", { credential }),
   me: () => get("/auth/me"),
 
   // Schools
@@ -97,9 +160,55 @@ export const api = {
   // Constraints
   listConstraints: (schoolId) => get(`/constraints?school_id=${schoolId}`),
   parseConstraint: (schoolId, text) => post("/constraints/parse", { school_id: schoolId, text }),
+  // Re-parses new text into an EXISTING constraint (same id) instead of
+  // creating a new one — used by the Edit affordance on a constraint card.
+  reparseConstraint: (id, text) => put(`/constraints/${id}/reparse`, { text }),
+  // Direct field edit — used for the scope picker (parameters.class_group_ids)
+  // without re-typing/re-parsing the whole rule.
+  updateConstraint: (id, data) => put(`/constraints/${id}`, data),
   deleteConstraint: (id) => del(`/constraints/${id}`),
 
-  // Timetables
+  // Timetables — generation runs as a background job (see
+  // backend/app/routers/timetables.py). generateTimetable() kicks the job
+  // off and returns immediately with status="generating"; getTimetable()
+  // polls for the job's current state (TimetableTab.jsx polls this on an
+  // interval until status is no longer "generating").
   generateTimetable: (schoolId) => post(`/timetables/generate?school_id=${schoolId}`),
+  getTimetable: (id) => get(`/timetables/${id}`),
   listTimetables: (schoolId) => get(`/timetables?school_id=${schoolId}`),
+  // Manual editing of one already-generated slot — lock/unlock it (kept in
+  // place on the next regenerate) and/or drag it to a free period.
+  // See PATCH /api/timetables/entries/{id} in backend/app/routers/timetables.py.
+  updateTimetableEntry: (entryId, data) => patch(`/timetables/entries/${entryId}`, data),
+  // Dragging a slot onto another *filled* slot swaps them (moving just one
+  // would look like a double-booking until the other moves out of the
+  // way too) — see POST .../entries/{id}/swap-with/{id} in the same router.
+  swapTimetableEntries: (entryId, otherEntryId) =>
+    post(`/timetables/entries/${entryId}/swap-with/${otherEntryId}`),
+  // Triggers a browser download of the exported file — see downloadFile
+  // above for why this can't just be a plain <a href> anymore.
+  downloadTimetableExport: (id, format) =>
+    downloadFile(`/timetables/${id}/export?format=${format}`, `timetable_${id}.${format}`),
+
+  // Bulk import — upload a CSV/.xlsx of subjects, rooms, teachers, or
+  // class groups instead of adding them one at a time. See
+  // backend/app/services/bulk_import.py and the /bulk-import routes on
+  // each resource's router. `resource` is one of "subjects", "rooms",
+  // "teachers", "class-groups" (matches the router prefix).
+  bulkImport: (resource, schoolId, file) => uploadFile(`/${resource}/bulk-import`, schoolId, file),
+  bulkImportTemplateUrl: (resource) => `/api/${resource}/bulk-import/template`,
+
+  // Members & invites — see backend/app/core/access.py for the role model
+  // (admin/viewer, owner is always an implicit admin) and
+  // backend/app/routers/schools.py + invites.py for these endpoints.
+  listMembers: (schoolId) => get(`/schools/${schoolId}/members`),
+  updateMemberRole: (schoolId, userId, role) => patch(`/schools/${schoolId}/members/${userId}`, { role }),
+  removeMember: (schoolId, userId) => del(`/schools/${schoolId}/members/${userId}`),
+  listInvites: (schoolId) => get(`/schools/${schoolId}/invites`),
+  createInvite: (schoolId, email, role) => post(`/schools/${schoolId}/invites`, { email, role }),
+  revokeInvite: (schoolId, inviteId) => del(`/schools/${schoolId}/invites/${inviteId}`),
+  // Public — no auth required, since whoever clicked the invite link
+  // likely isn't logged in yet.
+  previewInvite: (token) => get(`/invites/${token}`),
+  acceptInvite: (token, data) => post(`/invites/${token}/accept`, data),
 };

@@ -1,18 +1,22 @@
 """
-Auth endpoints: email/password signup and login.
+Auth endpoints: email/password signup and login, plus Google sign-in.
 
-Google sign-in isn't wired up yet — that needs a Google Cloud OAuth client
-(client ID/secret) which only the project owner can create. The User model
-already has a `google_sub` column reserved for it so adding it later is a
-new router + a few lines here, not a schema change.
+Google sign-in verifies the ID token Google's Sign-In button hands the
+frontend (a JWT signed by Google, not something we issue) against Google's
+public keys and our configured client ID, then finds-or-creates a User by
+email. No password is ever involved for that path — `hashed_password` stays
+null for Google-only accounts (the User model already allows this).
 """
 from fastapi import APIRouter, Depends, HTTPException
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy.orm import Session
 
 from app.core.auth import create_access_token, get_current_user, hash_password, verify_password
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse, UserOut
+from app.schemas.auth import GoogleLoginRequest, LoginRequest, SignupRequest, TokenResponse, UserOut
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -41,6 +45,49 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+
+    token = create_access_token(user.id)
+    return TokenResponse(access_token=token, user=user)
+
+
+@router.post("/google", response_model=TokenResponse)
+def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+    if not settings.google_client_id:
+        # Fails loudly rather than silently accepting an unverifiable
+        # token — better than pretending Google sign-in works when the
+        # server has no client ID to check the token's audience against.
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in isn't configured on this server yet.",
+        )
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            payload.credential, google_requests.Request(), settings.google_client_id
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google sign-in token")
+
+    email = claims.get("email")
+    if not email or not claims.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account has no verified email")
+    google_sub = claims["sub"]
+    name = claims.get("name")
+
+    # Match on google_sub first (a returning Google-sign-in user), then
+    # fall back to email (an existing email/password account signing in
+    # with Google for the first time — link it rather than creating a
+    # duplicate account with the same email).
+    user = db.query(User).filter(User.google_sub == google_sub).first()
+    if not user:
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            user.google_sub = google_sub
+        else:
+            user = User(email=email, name=name, google_sub=google_sub)
+            db.add(user)
+        db.commit()
+        db.refresh(user)
 
     token = create_access_token(user.id)
     return TokenResponse(access_token=token, user=user)

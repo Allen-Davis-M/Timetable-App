@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import BulkImportPanel from './BulkImportPanel'
 import PeriodsPanel from './PeriodsPanel'
+import RoomsPanel from './RoomsPanel'
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
@@ -14,28 +16,41 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
  * per-section, so they get a lightweight setup block up top instead of
  * their own tab — most schools just need a standard Mon-Fri grid, which
  * the quick-setup button creates in one click.
+ *
+ * When a subject has more than one qualified teacher, a "Preferred
+ * teacher" picker appears so the admin can pin which one covers this
+ * specific section (SubjectRequirement.preferred_teacher_id). This isn't
+ * just a convenience — leaving multiple teachers interchangeable makes
+ * the solver search a much larger space of equally-valid schedules, which
+ * gets dramatically slower at scale (see the scale-testing table in
+ * docs/ARCHITECTURE.md: pinning turned an inconclusive 50-section solve
+ * into an optimal 200-section solve in ~11s).
  */
-export default function DataEntryTab({ schoolId, classGroupId }) {
+export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChanged, readOnly = false }) {
   const [subjects, setSubjects] = useState([])
   const [teachers, setTeachers] = useState([])
   const [requirements, setRequirements] = useState([])
   const [periods, setPeriods] = useState([])
+  const [rooms, setRooms] = useState([])
   const [openDropdownId, setOpenDropdownId] = useState(null)
   const [showPeriods, setShowPeriods] = useState(false)
+  const [showRooms, setShowRooms] = useState(false)
   const [error, setError] = useState(null)
 
   async function load() {
     try {
-      const [s, t, r, p] = await Promise.all([
+      const [s, t, r, p, rm] = await Promise.all([
         api.listSubjects(schoolId),
         api.listTeachers(schoolId),
         api.listRequirements(classGroupId),
         api.listPeriods(schoolId),
+        api.listRooms(schoolId),
       ])
       setSubjects(s)
       setTeachers(t)
       setRequirements(r)
       setPeriods(p)
+      setRooms(rm)
     } catch (err) {
       setError(err.message)
     }
@@ -94,6 +109,15 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
     }
   }
 
+  async function handleUpdateRoomType(id, requiredRoomType) {
+    try {
+      await api.updateSubject(id, { required_room_type: requiredRoomType || null })
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   async function handleUpdatePeriods(subjectId, periodsPerWeek) {
     try {
       // Re-fetch instead of reading from React state: if this field is
@@ -140,6 +164,28 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
       await api.updateTeacher(teacher.id, {
         qualified_subject_ids: teacher.qualified_subject_ids.filter((id) => id !== subjectId),
       })
+      // If this teacher was pinned as the preferred teacher for this
+      // subject on the currently selected section, clear that pin too —
+      // otherwise the solver would keep assigning them anyway (a pin
+      // overrides the qualified-teachers list by design, see solver.py),
+      // silently contradicting the "removed" state shown here.
+      const fresh = await api.listRequirements(classGroupId)
+      const requirement = fresh.find((r) => r.subject_id === subjectId)
+      if (requirement?.preferred_teacher_id === teacher.id) {
+        await api.updateRequirement(requirement.id, { preferred_teacher_id: null })
+      }
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleSetPreferredTeacher(subjectId, teacherId) {
+    try {
+      const fresh = await api.listRequirements(classGroupId)
+      const requirement = fresh.find((r) => r.subject_id === subjectId)
+      if (!requirement) return // picker is only shown once a requirement exists
+      await api.updateRequirement(requirement.id, { preferred_teacher_id: teacherId })
       await load()
     } catch (err) {
       setError(err.message)
@@ -153,9 +199,11 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
     const periodsPerWeek = requirement?.periods_per_week ?? 0
     return {
       subject,
+      requirement,
       periodsPerWeek,
       qualifiedTeachers,
       availableTeachers,
+      preferredTeacherId: requirement?.preferred_teacher_id ?? null,
       valid: periodsPerWeek > 0 && qualifiedTeachers.length > 0,
     }
   })
@@ -169,12 +217,14 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
             Applies school-wide, except periods/week which is set per section.
           </p>
         </div>
-        <button
-          onClick={handleAddSubject}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-        >
-          + Add subject
-        </button>
+        {!readOnly && (
+          <button
+            onClick={handleAddSubject}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+          >
+            + Add subject
+          </button>
+        )}
       </div>
 
       {periods.length === 0 ? (
@@ -183,12 +233,14 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
             No periods set up yet — the solver needs these before it can generate a
             timetable.
           </p>
-          <button
-            onClick={handleQuickSetupPeriods}
-            className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
-          >
-            Quick setup: Mon–Fri, 8 periods/day
-          </button>
+          {!readOnly && (
+            <button
+              onClick={handleQuickSetupPeriods}
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              Quick setup: Mon–Fri, 8 periods/day
+            </button>
+          )}
         </div>
       ) : (
         <button
@@ -204,6 +256,32 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
         </div>
       )}
 
+      <button
+        onClick={() => setShowRooms((v) => !v)}
+        className="w-fit text-xs text-slate-500 underline underline-offset-2"
+      >
+        {rooms.length} room{rooms.length === 1 ? '' : 's'} configured — {showRooms ? 'hide' : 'manage'}
+      </button>
+      {showRooms && (
+        <div className="rounded-md border border-slate-200 p-4">
+          <RoomsPanel schoolId={schoolId} />
+        </div>
+      )}
+
+      {!readOnly && (
+        <BulkImportPanel
+          schoolId={schoolId}
+          onImported={async () => {
+            await load()
+            // Class groups (sections) live in the sidebar's own state in
+            // App.jsx, not here — refresh that too so a bulk-imported
+            // section shows up without a manual page reload. Harmless to
+            // call after every import, not just a class-groups one.
+            if (onClassGroupsChanged) await onClassGroupsChanged()
+          }}
+        />
+      )}
+
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <table className="w-full border-collapse text-sm">
@@ -217,32 +295,32 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ subject, periodsPerWeek, qualifiedTeachers, availableTeachers, valid }) => (
-            // key includes classGroupId: the periods/week input below is an
-            // uncontrolled input (defaultValue), which React does NOT
-            // refresh on re-render — only on mount. Without classGroupId in
-            // the key, switching sections would silently keep showing the
-            // previous section's numbers in the box even though the real
-            // value underneath had changed (see the "Section B shows the
-            // same periods as Section A" bug this fixes).
-            <tr key={`${classGroupId}-${subject.id}`} className="border-b border-slate-100">
+          {rows.map(({ subject, requirement, periodsPerWeek, qualifiedTeachers, availableTeachers, preferredTeacherId, valid }) => (
+            <tr key={subject.id} className="border-b border-slate-100">
               <td className="py-2 pr-2">
                 <input
                   defaultValue={subject.name}
+                  disabled={readOnly}
                   onBlur={(e) => e.target.value !== subject.name && handleUpdateName(subject.id, e.target.value)}
-                  className="w-full rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                  className="w-full rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none disabled:bg-transparent disabled:text-slate-700"
+                />
+                <input
+                  defaultValue={subject.required_room_type ?? ''}
+                  disabled={readOnly}
+                  onBlur={(e) =>
+                    e.target.value !== (subject.required_room_type ?? '') &&
+                    handleUpdateRoomType(subject.id, e.target.value.trim())
+                  }
+                  placeholder="Room type (optional, e.g. lab)"
+                  title="If set, this subject can only be assigned a room whose type matches exactly"
+                  className="mt-0.5 w-full rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
                 />
               </td>
               <td className="py-2 pr-2">
-                <input
-                  type="number"
-                  min="0"
-                  defaultValue={periodsPerWeek}
-                  onBlur={(e) => {
-                    const val = Number(e.target.value) || 0
-                    if (val !== periodsPerWeek) handleUpdatePeriods(subject.id, val)
-                  }}
-                  className="w-16 rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                <PeriodsPerWeekInput
+                  value={periodsPerWeek}
+                  onSave={(val) => handleUpdatePeriods(subject.id, val)}
+                  disabled={readOnly}
                 />
               </td>
               <td className="py-2 pr-2">
@@ -250,20 +328,28 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
                   {qualifiedTeachers.map((t) => (
                     <span
                       key={t.id}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-2.5 py-1 text-xs text-white"
+                      title={t.id === preferredTeacherId ? 'Preferred teacher for this section' : undefined}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-white ${
+                        t.id === preferredTeacherId ? 'bg-emerald-700 ring-2 ring-emerald-200' : 'bg-slate-900'
+                      }`}
                     >
+                      {t.id === preferredTeacherId && '★ '}
                       {t.name}
-                      <button onClick={() => handleRemoveTeacher(subject.id, t)} className="opacity-70 hover:opacity-100">
-                        ✕
-                      </button>
+                      {!readOnly && (
+                        <button onClick={() => handleRemoveTeacher(subject.id, t)} className="opacity-70 hover:opacity-100">
+                          ✕
+                        </button>
+                      )}
                     </span>
                   ))}
-                  <button
-                    onClick={() => setOpenDropdownId(openDropdownId === subject.id ? null : subject.id)}
-                    className="rounded-full border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                  >
-                    + Add
-                  </button>
+                  {!readOnly && (
+                    <button
+                      onClick={() => setOpenDropdownId(openDropdownId === subject.id ? null : subject.id)}
+                      className="rounded-full border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      + Add
+                    </button>
+                  )}
                   {openDropdownId === subject.id && (
                     <div className="absolute left-0 top-7 z-10 max-h-52 w-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-1 shadow-md">
                       {availableTeachers.length === 0 && (
@@ -281,6 +367,24 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
                     </div>
                   )}
                 </div>
+                {requirement && qualifiedTeachers.length > 1 && (
+                  <select
+                    value={preferredTeacherId ?? ''}
+                    disabled={readOnly}
+                    onChange={(e) =>
+                      handleSetPreferredTeacher(subject.id, e.target.value ? Number(e.target.value) : null)
+                    }
+                    title="Which teacher covers this section — pinning one speeds up generation for large schools"
+                    className="mt-1.5 rounded border border-slate-200 px-1.5 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    <option value="">Preferred teacher: any (let solver choose)</option>
+                    {qualifiedTeachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        Preferred teacher: {t.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </td>
               <td className="py-2 pr-2">
                 {valid ? (
@@ -292,13 +396,15 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
                 )}
               </td>
               <td className="py-2">
-                <button
-                  onClick={() => handleRemoveSubject(subject.id)}
-                  className="text-slate-300 hover:text-red-600"
-                  title="Remove subject"
-                >
-                  ✕
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={() => handleRemoveSubject(subject.id)}
+                    className="text-slate-300 hover:text-red-600"
+                    title="Remove subject"
+                  >
+                    ✕
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -312,12 +418,53 @@ export default function DataEntryTab({ schoolId, classGroupId }) {
         </tbody>
       </table>
 
-      <p className="text-xs text-slate-400">
-        Teachers are managed here too — add one from the "Teachers" list when
-        assigning them to a subject, or{' '}
-        <TeacherQuickAdd schoolId={schoolId} onAdded={load} />.
-      </p>
+      {!readOnly && (
+        <p className="text-xs text-slate-400">
+          Teachers are managed here too — add one from the "Teachers" list when
+          assigning them to a subject, or{' '}
+          <TeacherQuickAdd schoolId={schoolId} onAdded={load} />.
+        </p>
+      )}
     </div>
+  )
+}
+
+/**
+ * A controlled periods/week field, explicitly re-synced to `value`
+ * whenever it changes (e.g. switching sections).
+ *
+ * The previous version used an uncontrolled input (`defaultValue`), which
+ * only sets the DOM's value on first mount — React does not update it on
+ * later re-renders. Since this row's <tr> was reused across section
+ * switches (same subject.id, so same React key), the box kept showing
+ * whichever section's number it happened to mount with first, even after
+ * the real underlying value changed. That's exactly the "Section B shows
+ * Section A's periods" bug. A controlled input with this effect can't
+ * drift from the real value, regardless of how the parent re-renders.
+ */
+function PeriodsPerWeekInput({ value, onSave, disabled = false }) {
+  const [text, setText] = useState(String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  function handleBlur() {
+    const val = Number(text) || 0
+    if (val !== value) onSave(val)
+    else setText(String(value)) // normalize e.g. "007" -> "7"
+  }
+
+  return (
+    <input
+      type="number"
+      min="0"
+      value={text}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={handleBlur}
+      className="w-16 rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none disabled:bg-transparent disabled:text-slate-700"
+    />
   )
 }
 

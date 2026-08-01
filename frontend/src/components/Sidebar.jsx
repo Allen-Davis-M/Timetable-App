@@ -16,6 +16,7 @@ export default function Sidebar({
   selectedClassGroupId,
   onSelectClassGroup,
   onAddClassGroup,
+  readOnly = false,
 }) {
   const [expanded, setExpanded] = useState({})
   const [addingGrade, setAddingGrade] = useState(false)
@@ -77,16 +78,18 @@ export default function Sidebar({
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
           Grades &amp; sections
         </span>
-        <button
-          onClick={() => setAddingGrade((v) => !v)}
-          className="text-xs text-slate-400 hover:text-slate-700"
-          title="Add grade / section"
-        >
-          + Add
-        </button>
+        {!readOnly && (
+          <button
+            onClick={() => setAddingGrade((v) => !v)}
+            className="text-xs text-slate-400 hover:text-slate-700"
+            title="Add grade / section"
+          >
+            + Add
+          </button>
+        )}
       </div>
 
-      {addingGrade && (
+      {!readOnly && addingGrade && (
         <form onSubmit={handleAddSubmit} className="flex flex-col gap-1.5 rounded-md bg-slate-50 p-2">
           <input
             value={newGrade}
