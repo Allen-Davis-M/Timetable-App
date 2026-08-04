@@ -22,6 +22,7 @@ export default function Sidebar({
   const [addingGrade, setAddingGrade] = useState(false)
   const [newGrade, setNewGrade] = useState('')
   const [newSection, setNewSection] = useState('')
+  const [submittingSection, setSubmittingSection] = useState(false)
 
   const grades = useMemo(() => {
     const map = new Map()
@@ -37,13 +38,18 @@ export default function Sidebar({
     setExpanded((prev) => ({ ...prev, [grade]: !prev[grade] }))
   }
 
-  function handleAddSubmit(e) {
+  async function handleAddSubmit(e) {
     e.preventDefault()
-    if (!newGrade.trim() || !newSection.trim()) return
-    onAddClassGroup(newGrade.trim(), newSection.trim())
-    setNewGrade('')
-    setNewSection('')
-    setAddingGrade(false)
+    if (!newGrade.trim() || !newSection.trim() || submittingSection) return
+    setSubmittingSection(true)
+    try {
+      await onAddClassGroup(newGrade.trim(), newSection.trim())
+      setNewGrade('')
+      setNewSection('')
+      setAddingGrade(false)
+    } finally {
+      setSubmittingSection(false)
+    }
   }
 
   return (
@@ -91,20 +97,29 @@ export default function Sidebar({
 
       {!readOnly && addingGrade && (
         <form onSubmit={handleAddSubmit} className="flex flex-col gap-1.5 rounded-md bg-slate-50 p-2">
+          <label htmlFor="sidebar-new-grade" className="sr-only">Grade / Year</label>
           <input
+            id="sidebar-new-grade"
             value={newGrade}
             onChange={(e) => setNewGrade(e.target.value)}
-            placeholder="Grade (e.g. Grade 8)"
-            className="rounded border border-slate-300 px-2 py-1 text-xs"
+            placeholder="Grade 8, or Semester 3"
+            disabled={submittingSection}
+            className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
           />
+          <label htmlFor="sidebar-new-section" className="sr-only">Section / Division</label>
           <input
+            id="sidebar-new-section"
             value={newSection}
             onChange={(e) => setNewSection(e.target.value)}
-            placeholder="Section (e.g. A)"
-            className="rounded border border-slate-300 px-2 py-1 text-xs"
+            placeholder="A, or Div B"
+            disabled={submittingSection}
+            className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
           />
-          <button className="rounded bg-slate-900 py-1 text-xs font-medium text-white">
-            Add section
+          <button
+            disabled={submittingSection}
+            className="rounded bg-slate-900 py-1 text-xs font-medium text-white disabled:opacity-60"
+          >
+            {submittingSection ? 'Adding…' : 'Add section'}
           </button>
         </form>
       )}
@@ -114,6 +129,14 @@ export default function Sidebar({
           <div key={grade}>
             <div
               onClick={() => toggle(grade)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  toggle(grade)
+                }
+              }}
               className="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm hover:bg-slate-50"
             >
               <span
@@ -134,6 +157,15 @@ export default function Sidebar({
                     <div
                       key={cg.id}
                       onClick={() => onSelectClassGroup(cg.id)}
+                      role="button"
+                      tabIndex={0}
+                      aria-current={selected ? 'true' : undefined}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onSelectClassGroup(cg.id)
+                        }
+                      }}
                       className={`cursor-pointer rounded px-2.5 py-1.5 text-sm ${
                         selected
                           ? 'border-l-2 border-slate-900 bg-slate-100 font-medium text-slate-900'

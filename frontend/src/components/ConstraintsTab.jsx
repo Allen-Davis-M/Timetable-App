@@ -70,6 +70,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
       const [c, cg] = await Promise.all([api.listConstraints(schoolId), api.listClassGroups(schoolId)])
       setConstraints(c)
       setClassGroups(cg)
+      setError(null)
     } catch (err) {
       setError(err.message)
     }
@@ -100,7 +101,9 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
     }
   }
 
-  async function handleRemove(id) {
+  async function handleRemove(id, description) {
+    if (!window.confirm(`Remove this constraint?\n\n"${description}"`)) return
+    setError(null)
     try {
       await api.deleteConstraint(id)
       await load()
@@ -184,7 +187,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
             onStartScopeEdit={() => setScopeEditingId(c.id)}
             onCancelScopeEdit={() => setScopeEditingId(null)}
             onSaveScope={(ids) => handleSaveScope(c, ids)}
-            onRemove={() => handleRemove(c.id)}
+            onRemove={() => handleRemove(c.id, c.description)}
           />
         ))}
         {constraints.length === 0 && (
@@ -246,10 +249,10 @@ function ConstraintCard({
         </span>
         {!readOnly && (
           <div className="flex items-center gap-2">
-            <button onClick={onStartEdit} className="text-xs text-slate-400 hover:text-slate-700" title="Edit">
+            <button onClick={onStartEdit} className="text-xs text-slate-400 hover:text-slate-700" title="Edit" aria-label="Edit constraint">
               ✎
             </button>
-            <button onClick={onRemove} className="text-slate-300 hover:text-red-600" title="Delete">
+            <button onClick={onRemove} className="text-slate-300 hover:text-red-600" title="Delete" aria-label="Delete constraint">
               ✕
             </button>
           </div>

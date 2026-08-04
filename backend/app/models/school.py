@@ -59,6 +59,19 @@ class Subject(Base):
     # room_type matches exactly (e.g. "lab" for Chemistry). Null means any
     # room is fine — most subjects don't need a specific room type.
     required_room_type = Column(String, nullable=True)
+    # Optional, informational only — colleges track credits per course;
+    # schools generally don't set this at all. Not read by the solver.
+    credits = Column(Integer, nullable=True)
+    # If set to 2+, every period the solver schedules for this subject is
+    # split into this many simultaneous batches instead of one class
+    # session — e.g. a 60-student "Programming Lab" section splitting into
+    # 3 batches of ~20 in 3 different lab rooms, at the same time, each
+    # needing its own qualified teacher. Null/1 means no split (the
+    # default, and what every subject used before this field existed).
+    # See app/services/solver.py's batch-splitting block for how this is
+    # enforced — each batch is its own teacher+room assignment tied to the
+    # same day/period as its sibling batches.
+    lab_batch_count = Column(Integer, nullable=True)
 
     school = relationship("School", back_populates="subjects")
 
@@ -191,6 +204,11 @@ class TimetableEntry(Base):
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=False)
     locked = Column(Boolean, default=False)  # admin locked this slot before regenerating
+    # 1-indexed batch number when this entry came from a Subject.lab_batch_count
+    # split (see app/services/solver.py) — null for every normal, unsplit
+    # entry. Lets the frontend show "Batch 1"/"Batch 2" for what would
+    # otherwise be two indistinguishable rows at the same class/subject/period.
+    lab_batch = Column(Integer, nullable=True)
 
     timetable = relationship("Timetable", back_populates="entries")
 

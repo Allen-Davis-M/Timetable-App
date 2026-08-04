@@ -109,6 +109,14 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
         Cross-subject, so this (and min_gap_between_subjects) are the two
         constraint types that link two different SubjectRequirement rows'
         period-occupancy together.
+      - Subject.lab_batch_count (2+) splits a requirement's sessions into
+        that many simultaneous batches — e.g. a 60-student "Programming
+        Lab" splitting into 3 batches of ~20 at the same period, each with
+        its own teacher and (best-effort) room. See the lab_batch_count
+        branch inside the main requirement-building loop below for the
+        modeling approach. Known limitation: locked entries aren't honored
+        for batched subjects (they're re-solved fresh every regeneration)
+        — see the comment where locks are read, further down.
       - Room assignment is a second, separate CP-SAT solve
         (`_assign_rooms`) run after the main schedule is fixed — see its
         docstring for why it's kept separate rather than folded into the
@@ -244,6 +252,18 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
     subjects_by_id = {s.id: s for s in db.query(Subject).filter(Subject.school_id == school_id).all()}
     class_groups_by_id = {c.id: c for c in class_groups}
 
+    # batch_x[(req_id, period_id, batch_index)] = list of (teacher_id, var)
+    # — the lab-batch-splitting counterpart to `x` above. See the
+    # lab_batch_count branch below for why this needs its own structure
+    # instead of reusing `x` directly (each batch needs its own teacher
+    # choice, all tied to the same "does a session happen here" variable).
+    batch_x: dict[tuple[int, int, int], list[tuple[int, cp_model.IntVar]]] = {}
+
+    def _batch_count(req: SubjectRequirement) -> int:
+        subject = subjects_by_id.get(req.subject_id)
+        n = subject.lab_batch_count if subject else None
+        return n if isinstance(n, int) and n >= 2 else 1
+
     for req in requirements:
         if req.preferred_teacher_id:
             candidate_ids = [req.preferred_teacher_id] if req.preferred_teacher_id in teachers_by_id else []
@@ -267,24 +287,84 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
 
         restricted_periods_for_req = req_restricted_periods.get(req.id, set())
         required_periods_for_req = req_required_periods.get(req.id)  # None = no restriction
+        batch_count = _batch_count(req)
 
-        for teacher_id in candidate_ids:
-            teacher = teachers_by_id[teacher_id]
-            unavailable = set(teacher.unavailable_period_ids or [])
-            for period in periods:
-                if period.id in unavailable:
-                    continue
-                if period.id in restricted_periods_for_req:
-                    continue
-                if required_periods_for_req is not None and period.id not in required_periods_for_req:
-                    continue
-                var = model.NewBoolVar(f"x_r{req.id}_t{teacher_id}_p{period.id}")
-                x[(req.id, teacher_id, period.id)] = var
-                requirement_vars[req.id].append(var)
-                class_group_period_vars.setdefault((req.class_group_id, period.id), []).append(var)
-                teacher_period_vars.setdefault((teacher_id, period.id), []).append(var)
-                teacher_total_vars[teacher_id].append(var)
-                req_period_vars[req.id].setdefault(period.id, []).append(var)
+        if batch_count == 1:
+            for teacher_id in candidate_ids:
+                teacher = teachers_by_id[teacher_id]
+                unavailable = set(teacher.unavailable_period_ids or [])
+                for period in periods:
+                    if period.id in unavailable:
+                        continue
+                    if period.id in restricted_periods_for_req:
+                        continue
+                    if required_periods_for_req is not None and period.id not in required_periods_for_req:
+                        continue
+                    var = model.NewBoolVar(f"x_r{req.id}_t{teacher_id}_p{period.id}")
+                    x[(req.id, teacher_id, period.id)] = var
+                    requirement_vars[req.id].append(var)
+                    class_group_period_vars.setdefault((req.class_group_id, period.id), []).append(var)
+                    teacher_period_vars.setdefault((teacher_id, period.id), []).append(var)
+                    teacher_total_vars[teacher_id].append(var)
+                    req_period_vars[req.id].setdefault(period.id, []).append(var)
+            continue
+
+        # Lab-batch splitting (Subject.lab_batch_count >= 2): this
+        # requirement's periods are sessions where the whole class group
+        # splits into `batch_count` simultaneous batches, each with its
+        # own teacher (and, in the room-assignment pass below, its own
+        # room). Modeled with one "occ" var per eligible period (does a
+        # session happen here at all — this is what reserves the class
+        # group's slot and counts toward periods_per_week, exactly like a
+        # normal requirement's per-period vars would) plus, per batch, a
+        # teacher-choice var per candidate that's forced to sum to
+        # exactly `occ` — i.e. "if a session happens here, batch b has
+        # exactly one teacher; if not, zero". Feeding those teacher-choice
+        # vars into the same teacher_period_vars/teacher_total_vars
+        # structures the non-batched path uses means teacher
+        # double-booking (and therefore batch-to-batch distinctness within
+        # one period) and workload caps are enforced for free, with no
+        # extra constraints needed here.
+        if len(candidate_ids) < batch_count:
+            subject = subjects_by_id.get(req.subject_id)
+            cg = class_groups_by_id.get(req.class_group_id)
+            errors.append(
+                f"{subject.name if subject else 'This subject'} for "
+                f"{_class_group_label(cg) if cg else 'a section'} splits into {batch_count} lab "
+                f"batches, but only {len(candidate_ids)} qualified teacher(s) are available — add "
+                f"more qualified teachers (need at least {batch_count}) to staff every batch at once."
+            )
+            continue
+
+        for period in periods:
+            if period.id in restricted_periods_for_req:
+                continue
+            if required_periods_for_req is not None and period.id not in required_periods_for_req:
+                continue
+            free_teacher_ids = [
+                t_id for t_id in candidate_ids
+                if period.id not in set(teachers_by_id[t_id].unavailable_period_ids or [])
+            ]
+            if len(free_teacher_ids) < batch_count:
+                continue  # not enough free teachers to staff every batch at this period
+
+            occ = model.NewBoolVar(f"occ_r{req.id}_p{period.id}")
+            requirement_vars[req.id].append(occ)
+            class_group_period_vars.setdefault((req.class_group_id, period.id), []).append(occ)
+            req_period_vars[req.id].setdefault(period.id, []).append(occ)
+
+            for batch in range(batch_count):
+                batch_vars = []
+                for teacher_id in free_teacher_ids:
+                    var = model.NewBoolVar(f"x_r{req.id}_b{batch}_t{teacher_id}_p{period.id}")
+                    batch_vars.append((teacher_id, var))
+                    teacher_period_vars.setdefault((teacher_id, period.id), []).append(var)
+                    teacher_total_vars[teacher_id].append(var)
+                batch_x[(req.id, period.id, batch)] = batch_vars
+                # Exactly one teacher for this batch iff a session occurs
+                # here — ties every batch's period choice to `occ`, so all
+                # batches always land on the same period as each other.
+                model.Add(sum(v for _, v in batch_vars) == occ)
 
     if errors:
         return TimetableSolveResult(status="infeasible", errors=errors)
@@ -310,6 +390,15 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
             req = req_by_class_subject.get((le.class_group_id, le.subject_id))
             if not req:
                 continue  # the requirement this was locked against no longer exists
+            if _batch_count(req) > 1:
+                # Known limitation: locking isn't supported for lab-batch
+                # subjects yet — honoring a lock here would need to pin
+                # one specific batch's teacher without disturbing the
+                # others' occ-tied structure above, which the current
+                # single-key (req, teacher, period) lock format can't
+                # express. Batched sessions just get freshly re-solved
+                # every regeneration instead of silently mis-locking.
+                continue
             key = (req.id, le.teacher_id, le.period_id)
             if key not in x:
                 # Filtered out of the normal candidate list (e.g. the
@@ -515,6 +604,25 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
                         "period_id": period_id,
                     }
                 )
+        # Lab-batch assignments live in batch_x, not x (see the
+        # lab_batch_count branch above) — pulled in separately here, each
+        # tagged with its 1-indexed batch number so the frontend can show
+        # "Batch 1 - Room 3" / "Batch 2 - Room 5" for the same class,
+        # subject, and period instead of two indistinguishable rows.
+        for (req_id, period_id, batch), teacher_options in batch_x.items():
+            for teacher_id, var in teacher_options:
+                if solver.Value(var):
+                    req = req_by_id[req_id]
+                    assignments.append(
+                        {
+                            "class_group_id": req.class_group_id,
+                            "subject_id": req.subject_id,
+                            "teacher_id": teacher_id,
+                            "period_id": period_id,
+                            "batch": batch + 1,
+                        }
+                    )
+                    break
         _assign_rooms(db, school_id, assignments, locked_rooms=locked_rooms)
 
     if status_name in ("infeasible", "unknown"):

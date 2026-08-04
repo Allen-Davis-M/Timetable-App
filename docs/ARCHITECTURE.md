@@ -855,3 +855,146 @@ Both env vars (`GOOGLE_CLIENT_ID` backend-side, `VITE_GOOGLE_CLIENT_ID`
 frontend-side) must be set to the *same* value — Google's verification
 checks the token's audience against the client ID, so a mismatch fails
 closed rather than open.
+
+## Core-flow UX polish pass
+
+A pass through the existing admin flow (data entry, constraints,
+timetable, onboarding, sidebar, auth) looking for rough edges rather than
+new features — the kind of thing a first-time school admin actually hits.
+No new screens or endpoints; all fixes below are to code already
+described elsewhere in this doc.
+
+- **Error banners that never cleared.** `App.jsx`, `DataEntryTab.jsx`, and
+  `ConstraintsTab.jsx` set an error message on a failed request but never
+  cleared it on the next successful one, so a single flaky request left a
+  red banner pinned on screen indefinitely. All three now clear `error`
+  at the start of a successful load/action.
+- **`window.prompt()` for "add a school"** (`App.jsx`) replaced with an
+  inline modal matching the rest of the app's form styling — a native
+  browser dialog looked out of place next to everything else, and
+  couldn't show a "Creating…" state or a real inline error.
+- **Blank screen during session check.** `App.jsx` rendered nothing at
+  all while validating a stored token on load; now shows a small centered
+  spinner so a slow connection doesn't read as a frozen app.
+- **Double-submit risks.** `DataEntryTab.jsx`'s "Quick setup: Mon-Fri, 8
+  periods/day" button fires 40 `createPeriod` calls with no in-flight
+  guard — a double-click could fire 80, silently duplicating the period
+  grid. `TimetableTab.jsx`'s Excel/PDF export buttons had the same gap.
+  Both now track an in-flight state, disable themselves, and show
+  "Setting up…"/"Preparing…" while running. `Sidebar.jsx`'s "Add section"
+  form got the same treatment (`FirstRunWelcome.jsx`'s near-identical form
+  already had it — this was an inconsistency, not a missing feature).
+  `BulkImportPanel.jsx`'s resource-type `<select>` and file `<input>` now
+  disable while an upload is in flight, rather than letting someone swap
+  the target resource or pick a new file mid-upload.
+- **No confirmation on destructive actions.** Removing a subject
+  (`DataEntryTab.jsx`) or a constraint (`ConstraintsTab.jsx`) deleted
+  instantly with no undo. Both now show a `window.confirm()` naming the
+  specific thing being removed — not a custom modal, since the action is
+  reversible by re-adding and the stakes don't justify more UI for it.
+- **Stale `selectedTeacherId` (real bug, not just polish).**
+  `TimetableTab.jsx`'s "By Teacher" view only re-picked a default teacher
+  when nothing was selected, not when the teacher list itself changed —
+  switching schools could leave it pointing at a teacher id that doesn't
+  exist in the new school at all, silently rendering an empty grid with
+  no explanation. Now re-validates the current selection against the
+  live teacher list on every change.
+- **`OverviewTab.jsx`'s onboarding checklist silently swallowed load
+  errors**, rendering every step as "0 configured / not done" —
+  indistinguishable from a genuinely empty new school, and capable of
+  telling an admin to "set up periods" they already have. Now surfaces a
+  real error banner instead of guessing.
+- **Google sign-in's script-load failure was silent** (`AuthPage.jsx`):
+  if `accounts.google.com/gsi/client` failed to load (offline, blocked),
+  the "or" divider rendered with no button ever appearing beneath it and
+  no explanation. Now shows a small inline message and falls back
+  gracefully to email/password, which was always unaffected.
+- **Accessibility basics**: labels (visually hidden via `sr-only` where a
+  visible label would be redundant, e.g. subject-name and room-type
+  inputs) on previously placeholder-only form fields; `aria-label` on
+  icon-only buttons (constraint edit/delete, teacher-chip remove, subject
+  remove); `Sidebar.jsx`'s grade-expand and section-select rows — plain
+  `<div onClick>`s with no keyboard path at all — now have
+  `role="button"`, `tabIndex={0}`, and `onKeyDown` handling for Enter/Space.
+
+Deliberately left alone: this was a polish pass, not a redesign — no new
+components, no architectural changes, no new dependencies.
+
+## Colleges, part 1: fixed-batch extension
+
+First step of expanding beyond schools to colleges — specifically the
+large majority of Indian colleges affiliated to a state university, which
+assign students to a fixed year/division that follows one shared
+timetable, structurally the same problem as a school section. (The
+harder version — autonomous/credit-based colleges where students
+individually register for electives — is a different, much larger
+project deliberately not started here; see the business-planning
+conversation this was scoped alongside.)
+
+**Terminology, not schema.** `ClassGroup.grade`/`.name` were already
+freeform text fields, not fixed dropdowns — a college admin could already
+type "Semester 3" / "Div B" before this change. What actually excluded
+colleges was the UI copy assuming "Grade 8" / "A" everywhere (placeholders,
+onboarding steps, landing page). Updated `FirstRunWelcome.jsx`,
+`Sidebar.jsx`, and `LandingPage.jsx` to use neutral "Grade / Year" and
+"Section / Division" labels with dual-example placeholders, and to say
+"schools & colleges" instead of just "schools" in the marketing copy. No
+data model change — existing schools are unaffected.
+
+**`Subject.credits`**: optional integer, informational only, not read by
+the solver. Colleges track credits per course; schools generally don't
+set it. Surfaced as a small optional input in `DataEntryTab.jsx` next to
+the room-type field.
+
+**`Subject.lab_batch_count`**: the one real solver feature in this batch.
+When set to 2 or more, every period the solver schedules for that subject
+is split into that many simultaneous batches instead of one class
+session — e.g. a 60-student "Programming Lab" splitting into 3 batches of
+~20, each in its own lab room, each with its own teacher, all at the same
+period. Modeling approach (see `generate_school_timetable`'s
+`lab_batch_count` branch in `app/services/solver.py`):
+
+- One `occ` boolean var per eligible period represents "does a lab
+  session happen here at all" — this is what reserves the class group's
+  slot (feeds into `class_group_period_vars`, same as a normal
+  requirement) and counts toward `periods_per_week`.
+- Per batch, a teacher-choice var per qualified candidate, constrained to
+  sum to exactly `occ` — "if a session happens here, this batch has
+  exactly one teacher; if not, zero." This ties every batch to the same
+  period as its siblings without needing an explicit equality constraint
+  between them.
+- Those teacher-choice vars feed into the *same* `teacher_period_vars`/
+  `teacher_total_vars` structures the non-batched path already uses, so
+  teacher double-booking (which, within one period, is exactly what
+  keeps different batches from picking the same teacher) and workload
+  caps are enforced for free — no new constraint code needed for either.
+- Room assignment (`_assign_rooms`, a separate post-pass — see its own
+  docstring) needed no changes at all: each batch is just another
+  (class_group, subject, teacher, period) tuple needing a room, and
+  since batches share a period but have distinct teachers, the existing
+  room-double-booking-per-period constraint already forces them into
+  distinct rooms.
+- Upfront validation: if a subject has fewer qualified teachers than its
+  batch count, generation fails immediately with a specific message
+  ("splits into 3 batches, but only 2 qualified teachers are available")
+  rather than a generic CP-SAT infeasibility with no clear cause.
+
+**Known limitation, documented in the code**: locked entries aren't
+honored for batched subjects — a lock uses a single (requirement,
+teacher, period) key, which can't cleanly express "batch 2 specifically"
+without a bigger change to the lock format. Batched sessions are
+re-solved fresh on every regeneration instead of silently mis-locking one
+batch. `TimetableEntry.lab_batch` (nullable int, 1-indexed) tags which
+batch a row belongs to, null for every normal entry.
+
+**Frontend**: `TimetableTab.jsx`'s `entryFor` (singular) became
+`entriesFor` (plural, `.filter` instead of `.find`) since a batched slot
+now has several simultaneous entries at the same class group + period —
+rendered stacked with a "Batch N" label. Batched slots are view-only
+(no drag, no lock toggle) in this version, matching the backend's
+locked-entries limitation above — designing what "drag one batch" or
+"drag the whole session" should mean is future work, not done here.
+Verified end-to-end with `backend/verify_lab_batches.py` (a 3-batch lab
+subject alongside a normal subject): confirms exactly N simultaneous
+entries per session, all at the same period, all with distinct teachers,
+and — with enough lab-type rooms available — distinct rooms too.

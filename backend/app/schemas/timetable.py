@@ -35,6 +35,7 @@ class TimetableEntryOut(BaseModel):
     room_id: int | None
     room_name: str | None
     locked: bool
+    lab_batch: int | None = None
 
 
 class TimetableOut(BaseModel):

@@ -24,6 +24,11 @@ export default function AuthPage({ onAuthenticated, onBack }) {
   const [name, setName] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  // True if the Google script failed to load (offline, ad-blocker,
+  // accounts.google.com unreachable, etc.) — without this, that failure
+  // was silent: the "or" divider would render with no button ever
+  // appearing beneath it, and no indication anything had gone wrong.
+  const [googleUnavailable, setGoogleUnavailable] = useState(false)
   const googleButtonRef = useRef(null)
 
   const isLogin = mode === 'login'
@@ -71,6 +76,9 @@ export default function AuthPage({ onAuthenticated, onBack }) {
       script.src = 'https://accounts.google.com/gsi/client'
       script.async = true
       script.onload = render
+      script.onerror = () => {
+        if (!cancelled) setGoogleUnavailable(true)
+      }
       document.head.appendChild(script)
     }
 
@@ -123,7 +131,14 @@ export default function AuthPage({ onAuthenticated, onBack }) {
 
         {GOOGLE_CLIENT_ID ? (
           <>
-            <div className="mb-4 flex justify-center" ref={googleButtonRef} />
+            {googleUnavailable ? (
+              <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Couldn't load Google sign-in (check your connection) — email and password still
+                work below.
+              </p>
+            ) : (
+              <div className="mb-4 flex justify-center" ref={googleButtonRef} />
+            )}
             <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
               <div className="h-px flex-1 bg-slate-200" />
               or

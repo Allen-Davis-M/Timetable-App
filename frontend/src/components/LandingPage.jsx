@@ -170,14 +170,14 @@ function Hero({ onGetStarted }) {
         <motion.div initial="hidden" animate="show" variants={fadeUp} transition={{ duration: 0.6 }}>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Built for Indian schools
+            Built for Indian schools &amp; colleges
           </div>
           <h1 className="text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
             Conflict-free timetables, generated in minutes — not weeks.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-slate-500">
             Describe your scheduling rules in plain English, and a real optimization solver builds
-            the whole school's timetable at once — every section, every teacher, zero clashes.
+            the whole institution's timetable at once — every section, every teacher, zero clashes.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
@@ -274,7 +274,7 @@ function LogoStrip() {
   return (
     <div className="border-y border-slate-100 bg-slate-50/60 py-6">
       <p className="mb-3 text-center text-xs uppercase tracking-wide text-slate-400">
-        Built for schools that are done fighting spreadsheets
+        Built for schools & colleges that are done fighting spreadsheets
       </p>
       <Marquee
         speed={32}
@@ -304,7 +304,7 @@ function Features() {
       >
         <h2 className="text-3xl font-semibold tracking-tight">Everything the job actually needs</h2>
         <p className="mt-3 text-slate-500">
-          Not a generic scheduler with "school" bolted on — built around how Indian schools
+          Not a generic scheduler with "school" bolted on — built around how Indian schools and colleges
           actually plan a term.
         </p>
       </motion.div>
@@ -509,7 +509,7 @@ function Footer() {
     <footer className="border-t border-slate-100 py-10">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-400 md:flex-row">
         <span>© {new Date().getFullYear()} Timetable. All rights reserved.</span>
-        <span>Made for schools, not spreadsheets.</span>
+        <span>Made for schools & colleges, not spreadsheets.</span>
       </div>
     </footer>
   )

@@ -36,6 +36,9 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
   const [showPeriods, setShowPeriods] = useState(false)
   const [showRooms, setShowRooms] = useState(false)
   const [error, setError] = useState(null)
+  // Guards against the "quick setup" button firing 40 createPeriod calls
+  // once, then another 40 if double-clicked before the first batch lands.
+  const [settingUpPeriods, setSettingUpPeriods] = useState(false)
 
   async function load() {
     try {
@@ -51,6 +54,7 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
       setRequirements(r)
       setPeriods(p)
       setRooms(rm)
+      setError(null)
     } catch (err) {
       setError(err.message)
     }
@@ -61,6 +65,8 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
   }, [schoolId, classGroupId])
 
   async function handleQuickSetupPeriods() {
+    if (settingUpPeriods) return
+    setSettingUpPeriods(true)
     try {
       const calls = []
       for (let day = 0; day < 5; day++) {
@@ -79,6 +85,8 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
       await load()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSettingUpPeriods(false)
     }
   }
 
@@ -91,7 +99,10 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
     }
   }
 
-  async function handleRemoveSubject(id) {
+  async function handleRemoveSubject(id, name) {
+    if (!window.confirm(`Remove "${name}"? This also removes its periods/week and teacher qualifications for this subject.`)) {
+      return
+    }
     try {
       await api.deleteSubject(id)
       await load()
@@ -112,6 +123,29 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
   async function handleUpdateRoomType(id, requiredRoomType) {
     try {
       await api.updateSubject(id, { required_room_type: requiredRoomType || null })
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleUpdateCredits(id, value) {
+    const n = Number(value)
+    try {
+      await api.updateSubject(id, { credits: n > 0 ? n : null })
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleUpdateLabBatchCount(id, value) {
+    // 0/1/blank all mean "no split" — stored as null so the solver treats
+    // it exactly like any other subject (see Subject.lab_batch_count's
+    // docstring in backend/app/models/school.py).
+    const n = Number(value)
+    try {
+      await api.updateSubject(id, { lab_batch_count: n >= 2 ? n : null })
       await load()
     } catch (err) {
       setError(err.message)
@@ -236,9 +270,10 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
           {!readOnly && (
             <button
               onClick={handleQuickSetupPeriods}
-              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+              disabled={settingUpPeriods}
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
             >
-              Quick setup: Mon–Fri, 8 periods/day
+              {settingUpPeriods ? 'Setting up…' : 'Quick setup: Mon–Fri, 8 periods/day'}
             </button>
           )}
         </div>
@@ -298,13 +333,21 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
           {rows.map(({ subject, requirement, periodsPerWeek, qualifiedTeachers, availableTeachers, preferredTeacherId, valid }) => (
             <tr key={subject.id} className="border-b border-slate-100">
               <td className="py-2 pr-2">
+                <label htmlFor={`subject-name-${subject.id}`} className="sr-only">
+                  Subject name
+                </label>
                 <input
+                  id={`subject-name-${subject.id}`}
                   defaultValue={subject.name}
                   disabled={readOnly}
                   onBlur={(e) => e.target.value !== subject.name && handleUpdateName(subject.id, e.target.value)}
                   className="w-full rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none disabled:bg-transparent disabled:text-slate-700"
                 />
+                <label htmlFor={`subject-room-type-${subject.id}`} className="sr-only">
+                  Required room type (optional)
+                </label>
                 <input
+                  id={`subject-room-type-${subject.id}`}
                   defaultValue={subject.required_room_type ?? ''}
                   disabled={readOnly}
                   onBlur={(e) =>
@@ -315,6 +358,42 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
                   title="If set, this subject can only be assigned a room whose type matches exactly"
                   className="mt-0.5 w-full rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
                 />
+                <div className="mt-0.5 flex items-center gap-2">
+                  <label htmlFor={`subject-batches-${subject.id}`} className="text-xs text-slate-400">
+                    Split into
+                  </label>
+                  <input
+                    id={`subject-batches-${subject.id}`}
+                    type="number"
+                    min="0"
+                    max="10"
+                    defaultValue={subject.lab_batch_count ?? ''}
+                    disabled={readOnly}
+                    onBlur={(e) =>
+                      Number(e.target.value || 0) !== (subject.lab_batch_count ?? 0) &&
+                      handleUpdateLabBatchCount(subject.id, e.target.value)
+                    }
+                    placeholder="1"
+                    title="For lab/practical subjects: split the class into this many simultaneous batches, each with its own teacher and room. Leave blank or 1 for no split."
+                    className="w-12 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                  />
+                  <span className="text-xs text-slate-400">batches</span>
+                  <label htmlFor={`subject-credits-${subject.id}`} className="sr-only">Credits</label>
+                  <input
+                    id={`subject-credits-${subject.id}`}
+                    type="number"
+                    min="0"
+                    defaultValue={subject.credits ?? ''}
+                    disabled={readOnly}
+                    onBlur={(e) =>
+                      Number(e.target.value || 0) !== (subject.credits ?? 0) &&
+                      handleUpdateCredits(subject.id, e.target.value)
+                    }
+                    placeholder="Credits"
+                    title="Optional — for colleges that track credits per course. Not used by the solver."
+                    className="w-16 rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                  />
+                </div>
               </td>
               <td className="py-2 pr-2">
                 <PeriodsPerWeekInput
@@ -336,7 +415,11 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
                       {t.id === preferredTeacherId && '★ '}
                       {t.name}
                       {!readOnly && (
-                        <button onClick={() => handleRemoveTeacher(subject.id, t)} className="opacity-70 hover:opacity-100">
+                        <button
+                          onClick={() => handleRemoveTeacher(subject.id, t)}
+                          aria-label={`Remove ${t.name} from ${subject.name}`}
+                          className="opacity-70 hover:opacity-100"
+                        >
                           ✕
                         </button>
                       )}
@@ -398,9 +481,10 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
               <td className="py-2">
                 {!readOnly && (
                   <button
-                    onClick={() => handleRemoveSubject(subject.id)}
+                    onClick={() => handleRemoveSubject(subject.id, subject.name)}
                     className="text-slate-300 hover:text-red-600"
                     title="Remove subject"
+                    aria-label={`Remove subject ${subject.name}`}
                   >
                     ✕
                   </button>

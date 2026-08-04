@@ -45,7 +45,22 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id ?? null)
   const [error, setError] = useState(null)
   const [dragEntryId, setDragEntryId] = useState(null)
+  // Which export format is currently downloading, if any — guards against
+  // a double-click firing two downloads with no visual feedback either way.
+  const [exporting, setExporting] = useState(null) // null | 'xlsx' | 'pdf'
   const pollRef = useRef(null)
+
+  async function handleExport(format) {
+    if (exporting) return
+    setExporting(format)
+    try {
+      await api.downloadTimetableExport(timetable.id, format)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setExporting(null)
+    }
+  }
 
   useEffect(() => {
     api.listPeriods(schoolId).then(setPeriods).catch((err) => setError(err.message))
@@ -56,7 +71,14 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
   }, [schoolId])
 
   useEffect(() => {
-    if (!selectedTeacherId && teachers.length > 0) setSelectedTeacherId(teachers[0].id)
+    // Re-syncs whenever the teacher list changes — not just when nothing
+    // is selected. Without the "still valid" check, switching schools
+    // could leave selectedTeacherId pointing at a teacher that doesn't
+    // exist in the new school's list at all (a stale id from before),
+    // silently rendering an empty "By Teacher" grid with no indication
+    // why, until the admin happened to reselect manually.
+    const stillValid = teachers.some((t) => t.id === selectedTeacherId)
+    if (!stillValid) setSelectedTeacherId(teachers[0]?.id ?? null)
   }, [teachers, selectedTeacherId])
 
   function stopPolling() {
@@ -127,7 +149,10 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
     if (!entryId) return
     const targetPeriod = periodAt(day, order)
     if (!targetPeriod) return
-    const targetEntry = entryFor(day, order)
+    // Drop targets are never batched slots — batched cells don't attach
+    // onDrop at all (see the isBatched guard on <td> below) — so taking
+    // the first match here is safe.
+    const targetEntry = entriesFor(day, order)[0] ?? null
     if (targetEntry && targetEntry.id === entryId) return // dropped back on itself
     if (targetEntry && targetEntry.locked) {
       setError("That slot is locked — unlock it before swapping something into it.")
@@ -156,15 +181,20 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
     return periods.find((p) => p.day_of_week === day && p.order === order)
   }
 
-  function entryFor(day, order) {
+  // Returns every entry in this slot, not just one — a lab-batch-split
+  // subject (Subject.lab_batch_count >= 2, see backend/app/services/
+  // solver.py) produces several simultaneous entries at the same class
+  // group + period, one per batch, each with its own teacher and room.
+  // The normal, unsplit case is just an array of 0 or 1.
+  function entriesFor(day, order) {
     const period = periodAt(day, order)
-    if (!period || !timetable) return null
+    if (!period || !timetable) return []
     if (view === 'section') {
-      return timetable.entries.find(
+      return timetable.entries.filter(
         (e) => e.period_id === period.id && e.class_group_id === classGroup.id
       )
     }
-    return timetable.entries.find(
+    return timetable.entries.filter(
       (e) => e.period_id === period.id && e.teacher_id === selectedTeacherId
     )
   }
@@ -275,16 +305,18 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
             <div className="flex items-center gap-2 text-xs">
               <span className="text-slate-400">Export:</span>
               <button
-                onClick={() => api.downloadTimetableExport(timetable.id, 'xlsx').catch((err) => setError(err.message))}
-                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
+                onClick={() => handleExport('xlsx')}
+                disabled={!!exporting}
+                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               >
-                Excel
+                {exporting === 'xlsx' ? 'Preparing…' : 'Excel'}
               </button>
               <button
-                onClick={() => api.downloadTimetableExport(timetable.id, 'pdf').catch((err) => setError(err.message))}
-                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
+                onClick={() => handleExport('pdf')}
+                disabled={!!exporting}
+                className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               >
-                PDF
+                {exporting === 'pdf' ? 'Preparing…' : 'PDF'}
               </button>
             </div>
           </div>
@@ -308,42 +340,75 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
                       Period {order + 1}
                     </td>
                     {days.map((d) => {
-                      const entry = entryFor(d, order)
+                      const entries = entriesFor(d, order)
                       const period = periodAt(d, order)
                       const editable = view === 'section' && !readOnly
+                      // Lab-batch slots (2+ simultaneous entries) aren't
+                      // drag/lock-editable in this version — see
+                      // solver.py's note on locked entries not being
+                      // honored for batched subjects. Editing a single
+                      // batch out of several needs its own interaction
+                      // (which one? does it drag the whole session or one
+                      // batch?) that hasn't been designed yet, so these
+                      // slots are view-only for now rather than allowing
+                      // an edit that wouldn't survive regeneration anyway.
+                      const isBatched = entries.length > 1
+                      const singleEntry = entries.length === 1 ? entries[0] : null
                       return (
                         <td
                           key={d}
                           className={`border border-slate-200 px-3 py-2 ${editable ? 'align-top' : ''}`}
-                          onDragOver={editable ? (e) => e.preventDefault() : undefined}
-                          onDrop={editable ? () => handleDrop(d, order) : undefined}
+                          onDragOver={editable && !isBatched ? (e) => e.preventDefault() : undefined}
+                          onDrop={editable && !isBatched ? () => handleDrop(d, order) : undefined}
                         >
                           {!period ? (
                             <span className="text-slate-300">—</span>
-                          ) : entry ? (
+                          ) : isBatched ? (
+                            <div className="flex flex-col gap-1.5">
+                              {entries
+                                .slice()
+                                .sort((a, b) => (a.lab_batch ?? 0) - (b.lab_batch ?? 0))
+                                .map((e) => (
+                                  <div key={e.id} className="border-l-2 border-slate-200 pl-1.5">
+                                    <div className="font-medium">
+                                      {e.subject_name}
+                                      {e.lab_batch && (
+                                        <span className="ml-1 text-xs font-normal text-slate-400">
+                                          Batch {e.lab_batch}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {view === 'section' ? e.teacher_name : `Sec ${classGroupName(e.class_group_id)}`}
+                                    </div>
+                                    {e.room_name && <div className="text-xs text-slate-400">{e.room_name}</div>}
+                                  </div>
+                                ))}
+                            </div>
+                          ) : singleEntry ? (
                             <div
-                              draggable={editable && !entry.locked}
-                              onDragStart={editable ? () => setDragEntryId(entry.id) : undefined}
+                              draggable={editable && !singleEntry.locked}
+                              onDragStart={editable ? () => setDragEntryId(singleEntry.id) : undefined}
                               onDragEnd={() => setDragEntryId(null)}
-                              className={editable && !entry.locked ? 'cursor-move' : ''}
+                              className={editable && !singleEntry.locked ? 'cursor-move' : ''}
                             >
                               <div className="flex items-start justify-between gap-1">
-                                <div className="font-medium">{entry.subject_name}</div>
+                                <div className="font-medium">{singleEntry.subject_name}</div>
                                 {editable && (
                                   <button
-                                    onClick={() => handleToggleLock(entry)}
-                                    title={entry.locked ? 'Unlock (movable, may change on regenerate)' : 'Lock (kept in place on regenerate)'}
-                                    className={`text-xs leading-none ${entry.locked ? 'text-amber-600' : 'text-slate-300 hover:text-slate-500'}`}
+                                    onClick={() => handleToggleLock(singleEntry)}
+                                    title={singleEntry.locked ? 'Unlock (movable, may change on regenerate)' : 'Lock (kept in place on regenerate)'}
+                                    className={`text-xs leading-none ${singleEntry.locked ? 'text-amber-600' : 'text-slate-300 hover:text-slate-500'}`}
                                   >
-                                    {entry.locked ? '🔒' : '🔓'}
+                                    {singleEntry.locked ? '🔒' : '🔓'}
                                   </button>
                                 )}
                               </div>
                               <div className="text-xs text-slate-500">
-                                {view === 'section' ? entry.teacher_name : `Sec ${classGroupName(entry.class_group_id)}`}
+                                {view === 'section' ? singleEntry.teacher_name : `Sec ${classGroupName(singleEntry.class_group_id)}`}
                               </div>
-                              {entry.room_name && (
-                                <div className="text-xs text-slate-400">{entry.room_name}</div>
+                              {singleEntry.room_name && (
+                                <div className="text-xs text-slate-400">{singleEntry.room_name}</div>
                               )}
                             </div>
                           ) : (

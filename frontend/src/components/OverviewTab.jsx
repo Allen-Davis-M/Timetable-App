@@ -26,9 +26,17 @@ export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavi
   const [constraintCount, setConstraintCount] = useState(0)
   const [hasTimetable, setHasTimetable] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  // If these calls fail, the checklist would otherwise render every step
+  // as "0 configured / not done" — indistinguishable from a genuinely
+  // empty new school, and could tell an admin to "set up periods" they
+  // actually already have. Track the failure explicitly instead of
+  // swallowing it, so the checklist can say "couldn't load" rather than
+  // confidently lying about the school's real state.
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
     setLoaded(false)
+    setLoadError(null)
     async function load() {
       try {
         const [periods, subjects, teachers, requirements, constraints, timetables] = await Promise.all([
@@ -45,8 +53,8 @@ export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavi
         setRequirementCount(requirements.length)
         setConstraintCount(constraints.length)
         setHasTimetable(timetables.length > 0)
-      } catch {
-        // Overview is a summary view; individual tabs surface real errors.
+      } catch (err) {
+        setLoadError(err.message)
       } finally {
         setLoaded(true)
       }
@@ -115,6 +123,13 @@ export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavi
             : 'Follow these steps in order — each one unlocks the next.'}
         </p>
       </div>
+
+      {loadError && (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Couldn't load this section's status ({loadError}) — the checklist below may not reflect
+          what's actually set up. Try switching sections and back, or check your connection.
+        </p>
+      )}
 
       <div className="flex flex-col gap-2.5">
         {steps.map((step, i) => (

@@ -59,12 +59,13 @@ export default function BulkImportPanel({ schoolId, onImported }) {
       <form onSubmit={handleUpload} className="mt-3 flex flex-wrap items-center gap-2">
         <select
           value={resource}
+          disabled={uploading}
           onChange={(e) => {
             setResource(e.target.value)
             setResult(null)
             setError(null)
           }}
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none disabled:opacity-60"
         >
           {RESOURCES.map((r) => (
             <option key={r.value} value={r.value}>
@@ -75,6 +76,7 @@ export default function BulkImportPanel({ schoolId, onImported }) {
         <input
           type="file"
           accept=".csv,.xlsx"
+          disabled={uploading}
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="text-sm"
         />

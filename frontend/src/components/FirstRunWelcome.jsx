@@ -41,7 +41,7 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup }) {
       <div>
         <h2 className="text-xl font-semibold">Welcome to {schoolName}</h2>
         <p className="mt-1.5 text-sm text-slate-500">
-          A timetable is built one grade/section at a time. Add your first one below to get
+          A timetable is built one year/section at a time. Add your first one below to get
           started — you'll fill in periods, subjects, and teachers right after.
         </p>
       </div>
@@ -49,7 +49,7 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup }) {
       <ol className="flex flex-col gap-2 text-sm text-slate-500">
         <li className="flex items-center gap-2.5">
           <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">1</span>
-          Add a grade and section (e.g. "Grade 8" / "A") — right here
+          Add a year and section — e.g. "Grade 8" / "A" for a school, or "Semester 3" / "Div B" for a college — right here
         </li>
         <li className="flex items-center gap-2.5">
           <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-500">2</span>
@@ -67,21 +67,21 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup }) {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-5">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">Grade</label>
+          <label className="text-xs font-medium text-slate-500">Grade / Year</label>
           <input
             value={grade}
             onChange={(e) => setGrade(e.target.value)}
-            placeholder="Grade 8"
+            placeholder="Grade 8, or Semester 3"
             autoFocus
             className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">Section</label>
+          <label className="text-xs font-medium text-slate-500">Section / Division</label>
           <input
             value={section}
             onChange={(e) => setSection(e.target.value)}
-            placeholder="A"
+            placeholder="A, or Div B"
             className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
           />
         </div>
@@ -94,7 +94,7 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup }) {
       </form>
 
       <p className="text-xs text-slate-400">
-        Have more than one grade/section? Add the rest later from the sidebar — one is enough to
+        Have more than one year/section? Add the rest later from the sidebar — one is enough to
         get started.
       </p>
     </div>

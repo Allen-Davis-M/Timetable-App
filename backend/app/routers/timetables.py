@@ -90,6 +90,7 @@ def _to_timetable_out(db: Session, timetable: Timetable) -> TimetableOut:
             "room_id": e.room_id,
             "room_name": room.name if room else None,
             "locked": e.locked,
+            "lab_batch": e.lab_batch,
         })
 
     return TimetableOut(
@@ -128,6 +129,7 @@ def _run_generation_job(timetable_id: int, school_id: int) -> None:
                     teacher_id=a["teacher_id"],
                     period_id=a["period_id"],
                     room_id=a.get("room_id"),
+                    lab_batch=a.get("batch"),
                     # Carries a lock forward from the previous timetable if
                     # this entry landed on the exact same (class group,
                     # subject, teacher, period) that was locked before —
@@ -400,6 +402,7 @@ def _entry_out(db: Session, entry: TimetableEntry) -> TimetableEntryOut:
         room_id=entry.room_id,
         room_name=room.name if room else None,
         locked=entry.locked,
+        lab_batch=entry.lab_batch,
     )
 
 
