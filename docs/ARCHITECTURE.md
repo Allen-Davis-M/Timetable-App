@@ -998,3 +998,68 @@ Verified end-to-end with `backend/verify_lab_batches.py` (a 3-batch lab
 subject alongside a normal subject): confirms exactly N simultaneous
 entries per session, all at the same period, all with distinct teachers,
 and — with enough lab-type rooms available — distinct rooms too.
+
+## Bulk-creating grades/sections
+
+Adding class groups one at a time (the existing form in
+`FirstRunWelcome.jsx` and `Sidebar.jsx`) doesn't scale for a school or
+college that wants "Grade 1 through 12, sections A through C" or
+"Semester 1 through 8, one division each" set up in one go — that's 36
+(or 8) separate form submissions otherwise.
+
+`BulkAddClassGroups.jsx` is a new shared component (used by both places
+rather than duplicated) taking a prefix ("Grade", "Semester", or blank),
+a numeric from/to range, and a section list — either a single-letter
+range like "A-D" or a comma-separated list like "A, B, C" / "North,
+South" for names that don't fit a range. It shows a live count preview
+before submitting ("This creates 36 sections") and computes the full
+cross-product client-side; the parsing (`expandSections`, `buildPairs`)
+is pure and has no server round-trip until submit.
+
+In `Sidebar.jsx`, it's also handed the school's existing `classGroups`
+and skips any (grade, name) pair that already exists rather than
+creating a duplicate or surfacing a unique-constraint error the admin
+didn't ask for — the preview text says how many will be skipped.
+`FirstRunWelcome.jsx` doesn't pass `existing` since a school with zero
+class groups (its only render condition) has nothing to collide with.
+
+Both places gained a small "Add one" / "Add a range" toggle rather than
+replacing the single-add form outright — some admins genuinely just want
+one section, and the toggle keeps that path exactly as simple as before.
+
+`App.jsx` gained `handleAddClassGroups` (plural) alongside the existing
+`handleAddClassGroup`: fires every create in `Promise.all` and reloads
+school data once at the end, rather than looping the singular handler
+(which reloads after every single create — fine for one, wasteful and
+re-render-heavy for dozens).
+
+## Deleting sections, and a real orphaned-data bug it surfaced
+
+`DELETE /api/class-groups/{id}` already existed, but nothing in the UI
+called it — added a delete ("✕") button per section row in
+`Sidebar.jsx` (admin-only, appears on hover, confirms before deleting)
+wired through a new `App.jsx` handler, `handleDeleteClassGroup`.
+
+Building this surfaced a real backend bug, the same class as the
+`delete_subject` orphaned-data fix from earlier: `TimetableEntry.
+class_group_id` has no ORM-level relationship or cascade back to
+`ClassGroup` (only `SubjectRequirement` does, via `ClassGroup.
+requirements`'s `cascade="all, delete-orphan"`). So deleting a class
+group that already had a generated timetable would either raise a
+foreign-key constraint error (Postgres — the common case now that
+Supabase is in the picture) or silently leave orphaned `TimetableEntry`
+rows behind (SQLite, which doesn't enforce foreign keys by default —
+explaining why this hadn't been caught in local dev). Those orphaned
+rows would then crash `_to_timetable_out`'s plain dict lookups
+(`class_groups[e.class_group_id].name`) the next time anyone viewed that
+timetable. Fixed in `delete_class_group`
+(`app/routers/class_groups.py`) by explicitly deleting the class group's
+`TimetableEntry` rows first, mirroring `delete_subject`'s existing fix.
+Verified directly with `backend/verify_delete_class_group.py`: creates a
+class group with a real timetable entry attached, deletes it, and
+asserts zero orphaned rows remain.
+
+Deleting a section removes its subject requirements and any of its
+timetable entries; other sections' entries in the same timetable are
+untouched. The confirm dialog says so explicitly, since this can't be
+undone.

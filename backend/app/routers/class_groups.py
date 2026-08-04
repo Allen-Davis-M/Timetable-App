@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.access import require_school_access
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.school import ClassGroup, SubjectRequirement
+from app.models.school import ClassGroup, SubjectRequirement, TimetableEntry
 from app.models.user import User
 from app.schemas.bulk_import import BulkImportOut
 from app.schemas.class_group import (
@@ -65,6 +65,18 @@ def delete_class_group(class_group_id: int, db: Session = Depends(get_db), curre
     if not class_group:
         raise HTTPException(status_code=404, detail="Class group not found")
     require_school_access(db, current_user, class_group.school_id, min_role="admin")
+    # TimetableEntry.class_group_id has no ORM-level relationship/cascade
+    # back to ClassGroup (only SubjectRequirement does, via the
+    # cascade="all, delete-orphan" on ClassGroup.requirements — see the
+    # model), so deleting a class group that already has generated
+    # timetable entries would otherwise either raise a foreign-key
+    # constraint error (Postgres) or silently leave orphaned rows behind
+    # (SQLite, which doesn't enforce FKs by default) — the orphaned rows
+    # then crash _to_timetable_out's plain dict lookups the next time
+    # that timetable is viewed. Deleting them explicitly here closes that
+    # gap, the same fix already applied to delete_subject in subjects.py
+    # for the equivalent bug.
+    db.query(TimetableEntry).filter(TimetableEntry.class_group_id == class_group_id).delete()
     db.delete(class_group)
     db.commit()
 

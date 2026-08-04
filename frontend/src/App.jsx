@@ -140,6 +140,50 @@ function App() {
     }
   }
 
+  // Bulk sibling of handleAddClassGroup — used by BulkAddClassGroups.jsx's
+  // range form (e.g. "Grade 1-12" x "Sections A-C" = 36 in one go).
+  // Fires every create in parallel and reloads once at the end, rather
+  // than calling handleAddClassGroup in a loop (which would reload school
+  // data after every single one — wasteful for dozens of creates, and the
+  // repeated re-renders would fight with the form's own submitting state).
+  async function handleAddClassGroups(pairs) {
+    try {
+      await Promise.all(
+        pairs.map(({ grade, name }) => api.createClassGroup({ school_id: selectedSchoolId, grade, name }))
+      )
+      setError(null)
+      await loadSchoolData(selectedSchoolId)
+    } catch (err) {
+      setError(err.message)
+      // Some may have succeeded before one failed — refresh regardless so
+      // the sidebar/list reflects whatever did get created rather than
+      // looking stale until the next unrelated reload.
+      await loadSchoolData(selectedSchoolId)
+    }
+  }
+
+  async function handleDeleteClassGroup(classGroup) {
+    const label = classGroup.grade ? `${classGroup.grade} - ${classGroup.name}` : classGroup.name
+    if (
+      !window.confirm(
+        `Delete Section ${label}? This also removes its subject requirements and any generated timetable entries for this section. This can't be undone.`
+      )
+    ) {
+      return
+    }
+    try {
+      await api.deleteClassGroup(classGroup.id)
+      setError(null)
+      // If the deleted section was selected, loadSchoolData's own
+      // fallback logic (`cg.some((c) => c.id === prev) ? prev : cg[0]?.id
+      // ?? null`) picks another one automatically — nothing extra needed
+      // here.
+      await loadSchoolData(selectedSchoolId)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   function handleLogout() {
     setToken(null)
     setUser(null)
@@ -200,6 +244,8 @@ function App() {
           selectedClassGroupId={selectedClassGroupId}
           onSelectClassGroup={setSelectedClassGroupId}
           onAddClassGroup={handleAddClassGroup}
+          onAddClassGroups={handleAddClassGroups}
+          onDeleteClassGroup={handleDeleteClassGroup}
           readOnly={isViewer}
         />
       ) : null}
@@ -265,7 +311,11 @@ function App() {
                 to add one before there's anything here to view.
               </p>
             ) : (
-              <FirstRunWelcome schoolName={selectedSchool.name} onAddClassGroup={handleAddClassGroup} />
+              <FirstRunWelcome
+                schoolName={selectedSchool.name}
+                onAddClassGroup={handleAddClassGroup}
+                onAddClassGroups={handleAddClassGroups}
+              />
             )
           )}
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import BulkAddClassGroups from './BulkAddClassGroups'
 
 /**
  * Left nav: school branding + switcher, then a Grade > Section tree built
@@ -16,10 +17,13 @@ export default function Sidebar({
   selectedClassGroupId,
   onSelectClassGroup,
   onAddClassGroup,
+  onAddClassGroups,
+  onDeleteClassGroup,
   readOnly = false,
 }) {
   const [expanded, setExpanded] = useState({})
   const [addingGrade, setAddingGrade] = useState(false)
+  const [addMode, setAddMode] = useState('single') // 'single' | 'range'
   const [newGrade, setNewGrade] = useState('')
   const [newSection, setNewSection] = useState('')
   const [submittingSection, setSubmittingSection] = useState(false)
@@ -96,32 +100,59 @@ export default function Sidebar({
       </div>
 
       {!readOnly && addingGrade && (
-        <form onSubmit={handleAddSubmit} className="flex flex-col gap-1.5 rounded-md bg-slate-50 p-2">
-          <label htmlFor="sidebar-new-grade" className="sr-only">Grade / Year</label>
-          <input
-            id="sidebar-new-grade"
-            value={newGrade}
-            onChange={(e) => setNewGrade(e.target.value)}
-            placeholder="Grade 8, or Semester 3"
-            disabled={submittingSection}
-            className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
-          />
-          <label htmlFor="sidebar-new-section" className="sr-only">Section / Division</label>
-          <input
-            id="sidebar-new-section"
-            value={newSection}
-            onChange={(e) => setNewSection(e.target.value)}
-            placeholder="A, or Div B"
-            disabled={submittingSection}
-            className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
-          />
-          <button
-            disabled={submittingSection}
-            className="rounded bg-slate-900 py-1 text-xs font-medium text-white disabled:opacity-60"
-          >
-            {submittingSection ? 'Adding…' : 'Add section'}
-          </button>
-        </form>
+        <div className="flex flex-col gap-1.5 rounded-md bg-slate-50 p-2">
+          <div className="flex gap-1 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setAddMode('single')}
+              className={`rounded px-2 py-0.5 font-medium ${addMode === 'single' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}
+            >
+              One
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddMode('range')}
+              className={`rounded px-2 py-0.5 font-medium ${addMode === 'range' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}
+            >
+              Range
+            </button>
+          </div>
+
+          {addMode === 'single' ? (
+            <form onSubmit={handleAddSubmit} className="flex flex-col gap-1.5">
+              <label htmlFor="sidebar-new-grade" className="sr-only">Grade / Year</label>
+              <input
+                id="sidebar-new-grade"
+                value={newGrade}
+                onChange={(e) => setNewGrade(e.target.value)}
+                placeholder="Grade 8, or Semester 3"
+                disabled={submittingSection}
+                className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
+              />
+              <label htmlFor="sidebar-new-section" className="sr-only">Section / Division</label>
+              <input
+                id="sidebar-new-section"
+                value={newSection}
+                onChange={(e) => setNewSection(e.target.value)}
+                placeholder="A, or Div B"
+                disabled={submittingSection}
+                className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
+              />
+              <button
+                disabled={submittingSection}
+                className="rounded bg-slate-900 py-1 text-xs font-medium text-white disabled:opacity-60"
+              >
+                {submittingSection ? 'Adding…' : 'Add section'}
+              </button>
+            </form>
+          ) : (
+            <BulkAddClassGroups
+              onAddClassGroups={onAddClassGroups}
+              existing={classGroups}
+              onDone={() => setAddingGrade(false)}
+            />
+          )}
+        </div>
       )}
 
       <div className="flex flex-1 flex-col gap-px overflow-y-auto">
@@ -166,13 +197,26 @@ export default function Sidebar({
                           onSelectClassGroup(cg.id)
                         }
                       }}
-                      className={`cursor-pointer rounded px-2.5 py-1.5 text-sm ${
+                      className={`group flex items-center justify-between rounded px-2.5 py-1.5 text-sm ${
                         selected
                           ? 'border-l-2 border-slate-900 bg-slate-100 font-medium text-slate-900'
                           : 'border-l-2 border-transparent text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      Section {cg.name}
+                      <span className="cursor-pointer">Section {cg.name}</span>
+                      {!readOnly && onDeleteClassGroup && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDeleteClassGroup(cg)
+                          }}
+                          title={`Delete Section ${cg.name}`}
+                          aria-label={`Delete Section ${cg.name}`}
+                          className="opacity-0 text-slate-300 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                   )
                 })}
