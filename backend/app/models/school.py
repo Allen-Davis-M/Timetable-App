@@ -19,6 +19,13 @@ class School(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # "school" or "college" — chosen once at creation (see routers/schools.py
+    # and frontend App.jsx's create-school modal). Purely a UI hint for
+    # smart defaults (terminology, which optional fields to show) — nothing
+    # in the solver or access-control logic branches on this, so an
+    # existing row with this left null is treated as "school" everywhere
+    # that reads it, not an error state.
+    institution_type = Column(String, nullable=True)
 
     owner = relationship("User", back_populates="schools")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")

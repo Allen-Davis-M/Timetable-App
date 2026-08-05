@@ -9,6 +9,7 @@ import BulkAddClassGroups from './BulkAddClassGroups'
  */
 export default function Sidebar({
   schoolName,
+  institutionType,
   schools,
   selectedSchoolId,
   onSelectSchool,
@@ -150,6 +151,7 @@ export default function Sidebar({
               onAddClassGroups={onAddClassGroups}
               existing={classGroups}
               onDone={() => setAddingGrade(false)}
+              institutionType={institutionType}
             />
           )}
         </div>

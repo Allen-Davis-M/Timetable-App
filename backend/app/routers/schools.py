@@ -36,11 +36,11 @@ def create_school(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    school = School(name=payload.name, owner_id=current_user.id)
+    school = School(name=payload.name, owner_id=current_user.id, institution_type=payload.institution_type)
     db.add(school)
     db.commit()
     db.refresh(school)
-    return SchoolOut(id=school.id, name=school.name, role="admin")
+    return SchoolOut(id=school.id, name=school.name, institution_type=school.institution_type, role="admin")
 
 
 @router.get("", response_model=list[SchoolOut])
@@ -60,7 +60,12 @@ def list_schools(
     # same school; de-dupe by id rather than assume that can't happen.
     by_id = {s.id: s for s in owned + member_schools}
     return [
-        SchoolOut(id=s.id, name=s.name, role=get_membership_role(db, current_user, s.id) or "viewer")
+        SchoolOut(
+            id=s.id,
+            name=s.name,
+            institution_type=s.institution_type,
+            role=get_membership_role(db, current_user, s.id) or "viewer",
+        )
         for s in by_id.values()
     ]
 
@@ -73,7 +78,7 @@ def get_school(
 ):
     role = require_school_access(db, current_user, school_id)
     school = db.get(School, school_id)
-    return SchoolOut(id=school.id, name=school.name, role=role)
+    return SchoolOut(id=school.id, name=school.name, institution_type=school.institution_type, role=role)
 
 
 @router.get("/{school_id}/members", response_model=list[MemberOut])

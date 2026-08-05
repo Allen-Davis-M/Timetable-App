@@ -21,7 +21,7 @@ import BulkAddClassGroups from './BulkAddClassGroups'
  * the rest of the setup (periods -> subjects & teachers -> this section's
  * requirements -> constraints (optional) -> generate).
  */
-export default function FirstRunWelcome({ schoolName, onAddClassGroup, onAddClassGroups }) {
+export default function FirstRunWelcome({ schoolName, institutionType, onAddClassGroup, onAddClassGroups }) {
   const [grade, setGrade] = useState('')
   const [section, setSection] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -91,7 +91,7 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup, onAddClas
             <input
               value={grade}
               onChange={(e) => setGrade(e.target.value)}
-              placeholder="Grade 8, or Semester 3"
+              placeholder={institutionType === 'college' ? 'Semester 3' : 'Grade 8'}
               autoFocus
               className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
             />
@@ -113,7 +113,7 @@ export default function FirstRunWelcome({ schoolName, onAddClassGroup, onAddClas
           </button>
         </form>
       ) : (
-        <BulkAddClassGroups onAddClassGroups={onAddClassGroups} />
+        <BulkAddClassGroups onAddClassGroups={onAddClassGroups} institutionType={institutionType} />
       )}
 
       <p className="text-xs text-slate-400">

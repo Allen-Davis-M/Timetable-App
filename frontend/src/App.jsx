@@ -39,6 +39,7 @@ function App() {
   // and couldn't show a "please wait" state or a proper error.
   const [addSchoolOpen, setAddSchoolOpen] = useState(false)
   const [newSchoolName, setNewSchoolName] = useState('')
+  const [newInstitutionType, setNewInstitutionType] = useState('school') // 'school' | 'college'
   const [creatingSchool, setCreatingSchool] = useState(false)
   // Unauthenticated visitors see LandingPage.jsx first (marketing page,
   // "Get started"/"Sign in" CTAs), not straight-to-login — this flips to
@@ -117,12 +118,16 @@ function App() {
     if (!newSchoolName.trim() || creatingSchool) return
     setCreatingSchool(true)
     try {
-      const school = await api.createSchool({ name: newSchoolName.trim() })
+      const school = await api.createSchool({
+        name: newSchoolName.trim(),
+        institution_type: newInstitutionType,
+      })
       setError(null)
       await loadSchools()
       setSelectedSchoolId(school.id)
       setAddSchoolOpen(false)
       setNewSchoolName('')
+      setNewInstitutionType('school')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -236,6 +241,7 @@ function App() {
       {schools.length > 0 ? (
         <Sidebar
           schoolName={selectedSchool?.name}
+          institutionType={selectedSchool?.institution_type}
           schools={schools}
           selectedSchoolId={selectedSchoolId}
           onSelectSchool={setSelectedSchoolId}
@@ -313,6 +319,7 @@ function App() {
             ) : (
               <FirstRunWelcome
                 schoolName={selectedSchool.name}
+                institutionType={selectedSchool.institution_type}
                 onAddClassGroup={handleAddClassGroup}
                 onAddClassGroups={handleAddClassGroups}
               />
@@ -333,6 +340,7 @@ function App() {
                 <DataEntryTab
                   schoolId={selectedSchoolId}
                   classGroupId={selectedClassGroupId}
+                  institutionType={selectedSchool?.institution_type}
                   onClassGroupsChanged={() => loadSchoolData(selectedSchoolId)}
                   readOnly={isViewer}
                 />
@@ -362,15 +370,41 @@ function App() {
             className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg"
           >
             <h2 className="text-lg font-semibold">New school</h2>
+
+            <span className="mb-1 mt-4 block text-xs font-medium text-slate-500">Type</span>
+            <div className="flex gap-2">
+              {[
+                { value: 'school', label: 'School' },
+                { value: 'college', label: 'College' },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setNewInstitutionType(opt.value)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium ${
+                    newInstitutionType === opt.value
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-slate-400">
+              Just sets sensible defaults (terminology, which optional fields show up) — you can
+              still use anything either way.
+            </p>
+
             <label className="mb-1 mt-4 block text-xs font-medium text-slate-500" htmlFor="new-school-name">
-              School name
+              {newInstitutionType === 'college' ? 'College name' : 'School name'}
             </label>
             <input
               id="new-school-name"
               autoFocus
               value={newSchoolName}
               onChange={(e) => setNewSchoolName(e.target.value)}
-              placeholder="e.g. Riverside Public School"
+              placeholder={newInstitutionType === 'college' ? 'e.g. Riverside College of Engineering' : 'e.g. Riverside Public School'}
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
             />
             <div className="mt-5 flex justify-end gap-2">
@@ -379,6 +413,7 @@ function App() {
                 onClick={() => {
                   setAddSchoolOpen(false)
                   setNewSchoolName('')
+                  setNewInstitutionType('school')
                 }}
                 className="rounded-md px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100"
               >

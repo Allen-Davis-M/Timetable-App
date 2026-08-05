@@ -16,8 +16,8 @@ import { useMemo, useState } from 'react'
  * combinations that already exist rather than creating duplicates or
  * erroring on a unique-constraint conflict the admin didn't ask for.
  */
-export default function BulkAddClassGroups({ onAddClassGroups, existing = [], onDone }) {
-  const [prefix, setPrefix] = useState('Grade')
+export default function BulkAddClassGroups({ onAddClassGroups, existing = [], onDone, institutionType }) {
+  const [prefix, setPrefix] = useState(institutionType === 'college' ? 'Semester' : 'Grade')
   const [from, setFrom] = useState('1')
   const [to, setTo] = useState('12')
   const [sections, setSections] = useState('A')

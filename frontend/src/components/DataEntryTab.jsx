@@ -26,7 +26,7 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
  * docs/ARCHITECTURE.md: pinning turned an inconclusive 50-section solve
  * into an optimal 200-section solve in ~11s).
  */
-export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChanged, readOnly = false }) {
+export default function DataEntryTab({ schoolId, classGroupId, institutionType, onClassGroupsChanged, readOnly = false }) {
   const [subjects, setSubjects] = useState([])
   const [teachers, setTeachers] = useState([])
   const [requirements, setRequirements] = useState([])
@@ -35,6 +35,7 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
   const [openDropdownId, setOpenDropdownId] = useState(null)
   const [showPeriods, setShowPeriods] = useState(false)
   const [showRooms, setShowRooms] = useState(false)
+  const [addTeacherOpen, setAddTeacherOpen] = useState(false)
   const [error, setError] = useState(null)
   // Guards against the "quick setup" button firing 40 createPeriod calls
   // once, then another 40 if double-clicked before the first batch lands.
@@ -252,14 +253,34 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
           </p>
         </div>
         {!readOnly && (
-          <button
-            onClick={handleAddSubject}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-          >
-            + Add subject
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setAddTeacherOpen(true)}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            >
+              + Add teacher
+            </button>
+            <button
+              onClick={handleAddSubject}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            >
+              + Add subject
+            </button>
+          </div>
         )}
       </div>
+
+      {addTeacherOpen && (
+        <AddTeacherModal
+          schoolId={schoolId}
+          subjects={subjects}
+          onClose={() => setAddTeacherOpen(false)}
+          onAdded={async () => {
+            setAddTeacherOpen(false)
+            await load()
+          }}
+        />
+      )}
 
       {periods.length === 0 ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
@@ -358,42 +379,44 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
                   title="If set, this subject can only be assigned a room whose type matches exactly"
                   className="mt-0.5 w-full rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
                 />
-                <div className="mt-0.5 flex items-center gap-2">
-                  <label htmlFor={`subject-batches-${subject.id}`} className="text-xs text-slate-400">
-                    Split into
-                  </label>
-                  <input
-                    id={`subject-batches-${subject.id}`}
-                    type="number"
-                    min="0"
-                    max="10"
-                    defaultValue={subject.lab_batch_count ?? ''}
-                    disabled={readOnly}
-                    onBlur={(e) =>
-                      Number(e.target.value || 0) !== (subject.lab_batch_count ?? 0) &&
-                      handleUpdateLabBatchCount(subject.id, e.target.value)
-                    }
-                    placeholder="1"
-                    title="For lab/practical subjects: split the class into this many simultaneous batches, each with its own teacher and room. Leave blank or 1 for no split."
-                    className="w-12 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
-                  />
-                  <span className="text-xs text-slate-400">batches</span>
-                  <label htmlFor={`subject-credits-${subject.id}`} className="sr-only">Credits</label>
-                  <input
-                    id={`subject-credits-${subject.id}`}
-                    type="number"
-                    min="0"
-                    defaultValue={subject.credits ?? ''}
-                    disabled={readOnly}
-                    onBlur={(e) =>
-                      Number(e.target.value || 0) !== (subject.credits ?? 0) &&
-                      handleUpdateCredits(subject.id, e.target.value)
-                    }
-                    placeholder="Credits"
-                    title="Optional — for colleges that track credits per course. Not used by the solver."
-                    className="w-16 rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
-                  />
-                </div>
+                {institutionType === 'college' && (
+                  <div className="mt-0.5 flex items-center gap-2">
+                    <label htmlFor={`subject-batches-${subject.id}`} className="text-xs text-slate-400">
+                      Split into
+                    </label>
+                    <input
+                      id={`subject-batches-${subject.id}`}
+                      type="number"
+                      min="0"
+                      max="10"
+                      defaultValue={subject.lab_batch_count ?? ''}
+                      disabled={readOnly}
+                      onBlur={(e) =>
+                        Number(e.target.value || 0) !== (subject.lab_batch_count ?? 0) &&
+                        handleUpdateLabBatchCount(subject.id, e.target.value)
+                      }
+                      placeholder="1"
+                      title="For lab/practical subjects: split the class into this many simultaneous batches, each with its own teacher and room. Leave blank or 1 for no split."
+                      className="w-12 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                    />
+                    <span className="text-xs text-slate-400">batches</span>
+                    <label htmlFor={`subject-credits-${subject.id}`} className="sr-only">Credits</label>
+                    <input
+                      id={`subject-credits-${subject.id}`}
+                      type="number"
+                      min="0"
+                      defaultValue={subject.credits ?? ''}
+                      disabled={readOnly}
+                      onBlur={(e) =>
+                        Number(e.target.value || 0) !== (subject.credits ?? 0) &&
+                        handleUpdateCredits(subject.id, e.target.value)
+                      }
+                      placeholder="Credits"
+                      title="Optional — for colleges that track credits per course. Not used by the solver."
+                      className="w-16 rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                    />
+                  </div>
+                )}
               </td>
               <td className="py-2 pr-2">
                 <PeriodsPerWeekInput
@@ -502,11 +525,11 @@ export default function DataEntryTab({ schoolId, classGroupId, onClassGroupsChan
         </tbody>
       </table>
 
-      {!readOnly && (
+      {!readOnly && teachers.length > 0 && (
         <p className="text-xs text-slate-400">
-          Teachers are managed here too — add one from the "Teachers" list when
-          assigning them to a subject, or{' '}
-          <TeacherQuickAdd schoolId={schoolId} onAdded={load} />.
+          {teachers.length} teacher{teachers.length === 1 ? '' : 's'} at this school. Use "+ Add
+          teacher" above to add another, or the "+ Add" button next to a subject's teacher list to
+          assign an existing one.
         </p>
       )}
     </div>
@@ -552,44 +575,111 @@ function PeriodsPerWeekInput({ value, onSave, disabled = false }) {
   )
 }
 
-function TeacherQuickAdd({ schoolId, onAdded }) {
-  const [adding, setAdding] = useState(false)
+/**
+ * Modal for adding a teacher with their subjects in one step, instead of
+ * creating a name-only teacher and then having to find them in every
+ * relevant subject's "+ Add" dropdown one at a time. A teacher can teach
+ * more than one subject (e.g. a Math teacher who also covers Physics), so
+ * this is a multi-select checkbox list, not a single dropdown — mirrors
+ * how `qualified_subject_ids` is actually modeled (a list) rather than
+ * implying one teacher = one subject.
+ */
+function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
   const [name, setName] = useState('')
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([])
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  async function handleAdd(e) {
-    e.preventDefault()
-    if (!name.trim()) return
-    try {
-      await api.createTeacher({ school_id: schoolId, name: name.trim() })
-      setName('')
-      setAdding(false)
-      onAdded()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  if (!adding) {
-    return (
-      <button onClick={() => setAdding(true)} className="underline underline-offset-2">
-        add a new teacher
-      </button>
+  function toggleSubject(id) {
+    setSelectedSubjectIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     )
   }
 
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!name.trim() || submitting) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      await api.createTeacher({
+        school_id: schoolId,
+        name: name.trim(),
+        qualified_subject_ids: selectedSubjectIds,
+      })
+      await onAdded()
+    } catch (err) {
+      setError(err.message)
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <form onSubmit={handleAdd} className="mt-1 inline-flex items-center gap-1.5">
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onBlur={() => !name && setAdding(false)}
-        placeholder="Teacher name"
-        className="rounded border border-slate-300 px-1.5 py-0.5 text-xs"
-      />
-      <button className="text-xs font-medium text-slate-900 underline">Add</button>
-      {error && <span className="text-red-600">{error}</span>}
-    </form>
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/30 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+        <h3 className="text-base font-semibold">Add teacher</h3>
+        <form onSubmit={handleSubmit} className="mt-3 flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="new-teacher-name" className="text-xs font-medium text-slate-500">
+              Name
+            </label>
+            <input
+              id="new-teacher-name"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Teacher name"
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-slate-500">
+              Subjects they teach (optional — a teacher can teach more than one)
+            </span>
+            {subjects.length === 0 ? (
+              <p className="text-xs text-slate-400">
+                No subjects yet — add subjects first, or add this teacher now and assign
+                subjects afterward from each subject's teacher list.
+              </p>
+            ) : (
+              <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 p-2">
+                {subjects.map((s) => (
+                  <label
+                    key={s.id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedSubjectIds.includes(s.id)}
+                      onChange={() => toggleSubject(s.id)}
+                    />
+                    {s.name}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <div className="mt-1 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              disabled={!name.trim() || submitting}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            >
+              {submitting ? 'Adding…' : 'Add teacher'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }

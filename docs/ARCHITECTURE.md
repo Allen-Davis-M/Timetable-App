@@ -1063,3 +1063,58 @@ Deleting a section removes its subject requirements and any of its
 timetable entries; other sections' entries in the same timetable are
 untouched. The confirm dialog says so explicitly, since this can't be
 undone.
+
+## School vs. college: cosmetic demarcation, not functional gating
+
+Added `School.institution_type` (`"school" | "college" | null`), chosen
+once via a two-button selector in the "New school" modal
+(`App.jsx`'s `submitAddSchool`/`newInstitutionType` state). This was
+deliberately scoped down from "gate features by institution type" to
+"cosmetic defaults only" — every existing capability (lab-batch
+splitting, credits, bulk grade/section creation, everything else)
+remains available to every school regardless of this field; nothing in
+the solver, access control, or any router branches on it. A school
+created before this field existed, or one where it's left null, is
+just treated as `"school"` everywhere it's read — never an error state.
+
+What it actually changes, all purely presentational:
+- `BulkAddClassGroups.jsx` defaults its "Prefix" field to `"Semester"`
+  instead of `"Grade"` when `institutionType === "college"`.
+- `FirstRunWelcome.jsx`'s single-add form placeholder switches between
+  `"Grade 8"` and `"Semester 3"` the same way.
+- `DataEntryTab.jsx` only renders the "Split into __ batches" and
+  "Credits" inputs next to each subject when `institutionType ===
+  "college"` — schools never see college-only fields cluttering the
+  subject list, but nothing stops a school from having them if the
+  field is ever changed at the database level directly (there's no UI
+  to change it after creation yet).
+
+`institutionType` is threaded down from `App.jsx` (reading
+`selectedSchool?.institution_type`) as a prop to `Sidebar`,
+`FirstRunWelcome`, and `DataEntryTab` — no new API calls, since
+`SchoolOut` already includes the field from `create_school`/
+`list_schools`/`get_school` in `app/routers/schools.py`.
+
+Known gap, left for later since it's out of scope for "cosmetic
+defaults": there's no way to change a school's type after creation, and
+no bulk indicator anywhere (sidebar, school switcher) showing which
+type a school is once you've moved past the creation modal.
+
+## Add-teacher modal with multi-subject assignment
+
+Previously, creating a teacher (`TeacherQuickAdd` in `DataEntryTab.jsx`)
+only took a name — assigning them to a subject required a separate trip
+through each subject row's "+ Add" teacher dropdown afterward. Replaced
+it with `AddTeacherModal`, opened via a "+ Add teacher" button next to
+the existing "+ Add subject" button, that takes a name plus a
+multi-select checkbox list of subjects in one form. It's a checkbox
+list rather than a single dropdown deliberately: `Teacher.
+qualified_subject_ids` is already a list (see `app/models/school.py`),
+because one teacher commonly covers more than one subject (e.g. a Math
+teacher who also teaches Physics) — the UI needed to reflect that
+directly instead of implying a 1:1 mapping. The modal calls
+`api.createTeacher` with `qualified_subject_ids` populated up front, so
+a teacher who teaches 3 subjects is fully set up in one submit instead
+of 4 separate actions (1 create + 3 "+ Add" clicks). Existing teachers
+can still be added to additional subjects afterward via each subject's
+own "+ Add" dropdown, unchanged.
