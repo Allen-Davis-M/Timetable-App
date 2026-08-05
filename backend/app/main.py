@@ -23,9 +23,9 @@ from app.routers import (
     schools,
     solver,
     subjects,
+    substitutions,
     teachers,
     timetables,
-    substitutions,
 )
 
 # Creates tables if they don't exist yet. Fine for local dev; production

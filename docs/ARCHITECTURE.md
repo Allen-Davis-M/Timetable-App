@@ -1118,3 +1118,52 @@ a teacher who teaches 3 subjects is fully set up in one submit instead
 of 4 separate actions (1 create + 3 "+ Add" clicks). Existing teachers
 can still be added to additional subjects afterward via each subject's
 own "+ Add" dropdown, unchanged.
+
+## Substitutions backend: fixing a divergent local file, adding the missing model
+
+The user had a `backend/app/routers/substitutions.py` and
+`backend/app/schemas/substitutions.py` locally that weren't part of any
+version packaged here — they'd diverged outside this session's tracked
+codebase, and their local `main.py` apparently imported the router too,
+since starting the backend crashed with `FastAPIError: Invalid args for
+response field!` pointing at a `Session` type.
+
+Root cause: the router called `user=Depends(require_school_access)`.
+`require_school_access` (`app/core/access.py`) is a plain function —
+`(db: Session, user: User, school_id: int, min_role: str = "viewer")` —
+meant to be called directly inside a route body after `db`/`current_user`
+are already resolved via their own real dependencies, exactly like every
+other router in this app does it
+(`require_school_access(db, current_user, school_id, min_role="admin")`).
+Wrapping it in `Depends()` makes FastAPI try to resolve *its*
+parameters — including `db: Session` — as request input, which isn't a
+valid Pydantic field type, so the app failed at import time (the whole
+backend wouldn't start, not just this one endpoint).
+
+Folded the feature in properly rather than just patching the crash:
+- Added `SubstitutionLog` to `app/models/school.py` (`school_id`,
+  `day_of_week`, `changes` as JSON, `created_at`) — it didn't exist
+  anywhere in the tracked codebase, so the router's queries against it
+  would have failed regardless of the `Depends()` bug.
+- Rewrote `app/schemas/substitutions.py` to match this codebase's
+  `ConfigDict(from_attributes=True)` convention (the user's version used
+  the older Pydantic v1-style `class Config`).
+- Rewrote `app/routers/substitutions.py`: fixed dependency wiring per
+  above, and changed the POST endpoint from no role check to
+  `min_role="admin"` to match every other write endpoint's convention
+  (subjects/teachers/constraints all require admin to create; a viewer
+  can read but not log a substitution).
+- Wired `substitutions` into `app/main.py`'s router imports and
+  `include_router` calls — it was entirely unregistered before.
+
+This is a brand-new table (`substitution_logs`), not a new column on an
+existing table, so — unlike every other schema change so far — no manual
+`ALTER TABLE` is needed on Supabase. `Base.metadata.create_all()` (which
+runs on every backend startup) creates missing *tables* automatically;
+it just can't add columns to tables that already exist.
+
+No frontend UI was built for this yet (there was no existing
+`SubstitutionsTab`-equivalent component in this session either) — this
+pass only fixes the backend crash and makes the API correct and
+callable. Building an actual "log a substitution" screen is a follow-up
+if the user wants one.

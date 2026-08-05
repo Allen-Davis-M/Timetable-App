@@ -5,10 +5,11 @@ Kept generic (not tied to one curriculum/board) per docs/ARCHITECTURE.md:
 schools define their own periods, subjects, and constraints rather than the
 schema assuming a fixed structure.
 """
+from datetime import datetime, timezone
+
 from sqlalchemy import (
-    Boolean, Column, ForeignKey, Integer, String, Text, JSON, UniqueConstraint, DateTime
+    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
 )
-from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -279,16 +280,27 @@ class SchoolInvite(Base):
 
 class SubstitutionLog(Base):
     """
-    A record of daily substitutions made for a school.
+    A day's worth of manual teacher-substitution records — e.g. "Ms. Iyer
+    is out Wednesday, Mr. Rao is covering her Period 3 Grade 8A Math
+    class." This is deliberately a simple audit log, not something the
+    solver reads or reasons about: substitutions are same-day, one-off
+    fixes an admin makes by hand when a teacher is unexpectedly absent,
+    not a scheduling constraint to solve around. See
+    app/routers/substitutions.py.
+
+    `changes` stores a list of individual swaps as JSON (each with
+    period_id, absent_teacher_id, substituting_teacher_id, class_group_id,
+    and an optional subject_id) rather than one row per swap, so a whole
+    day's substitutions are created and read as a single record — see
+    app/schemas/substitutions.py's SubstitutionChange for the shape of
+    each entry.
     """
     __tablename__ = "substitution_logs"
 
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
-    day_of_week = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=func.now())
-    # A JSON array of the substitutions made that day
-    # e.g. [{"period_id": 12, "absent_teacher_id": 3, "substituting_teacher_id": 5, "class_group_id": 2}]
+    day_of_week = Column(Integer, nullable=False)  # 0 = Monday ... 6 = Sunday
     changes = Column(JSON, default=list)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     school = relationship("School")
