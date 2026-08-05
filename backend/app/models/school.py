@@ -6,8 +6,9 @@ schools define their own periods, subjects, and constraints rather than the
 schema assuming a fixed structure.
 """
 from sqlalchemy import (
-    Boolean, Column, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
+    Boolean, Column, ForeignKey, Integer, String, Text, JSON, UniqueConstraint, DateTime
 )
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -272,5 +273,22 @@ class SchoolInvite(Base):
     token = Column(String, nullable=False, unique=True, index=True)
     invited_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(String, nullable=False, default="pending")  # "pending" | "accepted" | "revoked"
+
+    school = relationship("School")
+
+
+class SubstitutionLog(Base):
+    """
+    A record of daily substitutions made for a school.
+    """
+    __tablename__ = "substitution_logs"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    # A JSON array of the substitutions made that day
+    # e.g. [{"period_id": 12, "absent_teacher_id": 3, "substituting_teacher_id": 5, "class_group_id": 2}]
+    changes = Column(JSON, default=list)
 
     school = relationship("School")

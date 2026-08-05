@@ -25,6 +25,7 @@ from app.routers import (
     subjects,
     teachers,
     timetables,
+    substitutions,
 )
 
 # Creates tables if they don't exist yet. Fine for local dev; production
@@ -52,6 +53,7 @@ app.include_router(class_groups.router)
 app.include_router(constraints.router)
 app.include_router(timetables.router)
 app.include_router(solver.router)
+app.include_router(substitutions.router)
 
 
 @app.get("/health")

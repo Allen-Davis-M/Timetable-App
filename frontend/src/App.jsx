@@ -10,12 +10,14 @@ import DataEntryTab from './components/DataEntryTab'
 import ConstraintsTab from './components/ConstraintsTab'
 import TimetableTab from './components/TimetableTab'
 import TeamTab from './components/TeamTab'
+import SubstitutionsTab from './components/SubstitutionsTab'
 
 const BASE_TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'entry', label: 'Data Entry' },
   { id: 'constraints', label: 'Constraints' },
   { id: 'timetable', label: 'Timetable' },
+  { id: 'substitutions', label: 'Substitutions' },
 ]
 
 /**
@@ -353,6 +355,13 @@ function App() {
                   classGroups={classGroups}
                   teachers={teachers}
                   readOnly={isViewer}
+                />
+              )}
+              {tab === 'substitutions' && (
+                <SubstitutionsTab
+                  schoolId={selectedSchoolId}
+                  classGroups={classGroups}
+                  teachers={teachers}
                 />
               )}
               {tab === 'team' && selectedSchool?.role === 'admin' && (
