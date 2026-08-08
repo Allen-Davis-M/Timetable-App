@@ -32,29 +32,34 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
   const [requirements, setRequirements] = useState([])
   const [periods, setPeriods] = useState([])
   const [rooms, setRooms] = useState([])
+  const [classGroups, setClassGroups] = useState([])
   const [openDropdownId, setOpenDropdownId] = useState(null)
   const [showPeriods, setShowPeriods] = useState(false)
   const [showRooms, setShowRooms] = useState(false)
   const [addTeacherOpen, setAddTeacherOpen] = useState(false)
   const [error, setError] = useState(null)
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([])
+  const [copyingPeriods, setCopyingPeriods] = useState(false)
   // Guards against the "quick setup" button firing 40 createPeriod calls
   // once, then another 40 if double-clicked before the first batch lands.
   const [settingUpPeriods, setSettingUpPeriods] = useState(false)
 
   async function load() {
     try {
-      const [s, t, r, p, rm] = await Promise.all([
+      const [s, t, r, p, rm, cg] = await Promise.all([
         api.listSubjects(schoolId),
         api.listTeachers(schoolId),
         api.listRequirements(classGroupId),
         api.listPeriods(schoolId),
         api.listRooms(schoolId),
+        api.listClassGroups(schoolId),
       ])
       setSubjects(s)
       setTeachers(t)
       setRequirements(r)
       setPeriods(p)
       setRooms(rm)
+      setClassGroups(cg)
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -182,6 +187,55 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
     }
   }
 
+  async function handleToggleSubjectAssignment(subjectId, currentlyAssigned) {
+    const targetValue = currentlyAssigned ? 0 : 1
+    await handleUpdatePeriods(subjectId, targetValue)
+  }
+
+  async function handleCopyPeriodsToOtherSections() {
+    if (copyingPeriods) return
+    const rowsToCopy = selectedSubjectIds.length > 0
+      ? rows.filter((row) => selectedSubjectIds.includes(row.subject.id))
+      : rows.filter((row) => row.periodsPerWeek > 0)
+    if (rowsToCopy.length === 0) {
+      setError('Nothing to copy: set some periods/week in this section first.')
+      return
+    }
+
+    const otherSections = classGroups.filter((cg) => cg.id !== classGroupId)
+    if (otherSections.length === 0) {
+      setError('No other sections to copy to.')
+      return
+    }
+
+    if (!window.confirm(`Copy ${rowsToCopy.length} subject assignment${rowsToCopy.length === 1 ? '' : 's'} to ${otherSections.length} other section${otherSections.length === 1 ? '' : 's'}?`)) {
+      return
+    }
+
+    setCopyingPeriods(true)
+    setError(null)
+    try {
+      const calls = []
+      for (const target of otherSections) {
+        for (const row of rowsToCopy) {
+          calls.push(
+            api.createRequirement(target.id, {
+              class_group_id: target.id,
+              subject_id: row.subject.id,
+              periods_per_week: row.periodsPerWeek,
+            })
+          )
+        }
+      }
+      await Promise.all(calls)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setCopyingPeriods(false)
+    }
+  }
+
   async function handleAddTeacher(subjectId, teacher) {
     try {
       await api.updateTeacher(teacher.id, {
@@ -243,9 +297,31 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
     }
   })
 
+  const totalWeeklyPeriods = rows.reduce((sum, row) => sum + row.periodsPerWeek, 0)
+  const selectedAll = selectedSubjectIds.length === rows.length && rows.length > 0
+  const selectedCount = selectedSubjectIds.length
+
+  function toggleSelectedSubject(subjectId) {
+    setSelectedSubjectIds((prev) =>
+      prev.includes(subjectId) ? prev.filter((id) => id !== subjectId) : [...prev, subjectId]
+    )
+  }
+
+  function toggleSelectAll() {
+    if (selectedAll) {
+      setSelectedSubjectIds([])
+    } else {
+      setSelectedSubjectIds(rows.map((row) => row.subject.id))
+    }
+  }
+
+  const selectedRows = selectedSubjectIds.length > 0
+    ? rows.filter((row) => selectedSubjectIds.includes(row.subject.id))
+    : rows
+
   return (
     <div className="flex max-w-5xl flex-col gap-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h3 className="text-lg font-medium">Subjects &amp; teachers</h3>
           <p className="mt-1 text-sm text-slate-500">
@@ -281,6 +357,37 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
           }}
         />
       )}
+
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <strong>{totalWeeklyPeriods}</strong> total periods/week for this section
+          </div>
+          {!readOnly && rows.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-100"
+              >
+                {selectedAll ? 'Clear selection' : `Select ${rows.length} subject${rows.length === 1 ? '' : 's'}`}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyPeriodsToOtherSections}
+                disabled={copyingPeriods}
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+              >
+                {copyingPeriods
+                  ? 'Copying…'
+                  : selectedCount > 0
+                    ? `Copy ${selectedCount} selected subject${selectedCount === 1 ? '' : 's'} to other sections`
+                    : `Copy ${rows.filter((row) => row.periodsPerWeek > 0).length} subject${rows.filter((row) => row.periodsPerWeek > 0).length === 1 ? '' : 's'} to other sections`}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {periods.length === 0 ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
@@ -343,6 +450,17 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-left text-slate-500">
+            <th className="w-10 py-2 font-medium">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={selectedAll}
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                />
+                <span className="sr-only">Select all</span>
+              </label>
+            </th>
             <th className="w-1/4 py-2 font-medium">Subject</th>
             <th className="w-32 py-2 font-medium">Periods/week</th>
             <th className="py-2 font-medium">Teachers</th>
@@ -353,6 +471,14 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
         <tbody>
           {rows.map(({ subject, requirement, periodsPerWeek, qualifiedTeachers, availableTeachers, preferredTeacherId, valid }) => (
             <tr key={subject.id} className="border-b border-slate-100">
+              <td className="py-2 pr-2 align-top">
+                <input
+                  type="checkbox"
+                  checked={selectedSubjectIds.includes(subject.id)}
+                  onChange={() => toggleSelectedSubject(subject.id)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                />
+              </td>
               <td className="py-2 pr-2">
                 <label htmlFor={`subject-name-${subject.id}`} className="sr-only">
                   Subject name
@@ -515,9 +641,19 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
               </td>
             </tr>
           ))}
+          {rows.length > 0 && (
+            <tr className="bg-slate-50 text-slate-600">
+              <td className="py-3 pr-2"></td>
+              <td className="py-3 pr-2 text-sm font-semibold">Total</td>
+              <td className="py-3 pr-2 font-semibold">{totalWeeklyPeriods}</td>
+              <td colSpan={3} className="py-3 text-sm text-slate-500">
+                Total periods/week configured for this section.
+              </td>
+            </tr>
+          )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-4 text-sm text-slate-500">
+              <td colSpan={6} className="py-4 text-sm text-slate-500">
                 No subjects yet — add one above.
               </td>
             </tr>
