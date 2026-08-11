@@ -68,3 +68,4 @@ def create_substitution(
     db.commit()
     db.refresh(log)
     return log
+
