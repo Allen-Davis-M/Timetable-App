@@ -65,13 +65,13 @@ export default function SubstitutionsTab({ schoolId, teachers, classGroups }) {
   // Derived state: empty slots
   const emptySlots = useMemo(() => {
     if (!timetable || absentTeacherIds.length === 0) return []
-    
+
     // Find all entries for the selected day where the assigned teacher is absent
     const entries = timetable.entries.filter(e => {
       const period = periods.find(p => p.id === e.period_id)
       return period && period.day_of_week === selectedDay && absentTeacherIds.includes(e.teacher_id)
     })
-    
+
     // Sort by period order
     return entries.sort((a, b) => {
       const pA = periods.find(p => p.id === a.period_id)
@@ -80,22 +80,100 @@ export default function SubstitutionsTab({ schoolId, teachers, classGroups }) {
     })
   }, [timetable, absentTeacherIds, selectedDay, periods])
 
-  // Get available teachers for a specific period
-  const getAvailableTeachers = (periodId) => {
-    if (!timetable) return []
-    
-    // Teachers who are busy in this period
+  // How many periods/week each teacher is already carrying on the live
+  // timetable — used to break ties among equally-qualified substitutes by
+  // preferring whoever's lighter-loaded, rather than an arbitrary order.
+  const loadByTeacherId = useMemo(() => {
+    const counts = new Map()
+    if (timetable) {
+      for (const e of timetable.entries) {
+        counts.set(e.teacher_id, (counts.get(e.teacher_id) || 0) + 1)
+      }
+    }
+    return counts
+  }, [timetable])
+
+  // Ranked substitute candidates for one empty slot: teachers who are
+  // qualified for the subject AND free at that period are "suggested"
+  // (auto-filled below); everyone else who's merely free is a fallback so
+  // the admin is never blocked when no qualified teacher happens to be
+  // free. Excludes:
+  //   - the absent teacher(s) themselves
+  //   - anyone already teaching another class at that period (busy)
+  //   - anyone marked unavailable for that period (Teacher.unavailable_period_ids
+  //     — previously not checked here at all, so a teacher could get
+  //     suggested for a slot they'd explicitly been marked out for)
+  //   - anyone already staged as a substitute for a *different* slot at
+  //     the same period in this same draft, so two simultaneous gaps don't
+  //     both get assigned the same substitute
+  // Takes the staged-substitutions map as a parameter (rather than always
+  // reading the `substitutions` state directly) so the auto-fill pass
+  // below can dedupe against picks it just made earlier in the same pass,
+  // not just picks saved from a previous render.
+  const rankTeachers = (entry, stagedMap) => {
+    if (!timetable) return { suggested: [], others: [] }
+
     const busyTeacherIds = new Set(
       timetable.entries
-        .filter(e => e.period_id === periodId)
+        .filter(e => e.period_id === entry.period_id)
         .map(e => e.teacher_id)
     )
-    
-    // Available teachers = All - Busy - Absent
-    return teachers.filter(t => 
-      !busyTeacherIds.has(t.id) && !absentTeacherIds.includes(t.id)
+    const alreadyStagedThisPeriod = new Set(
+      Object.entries(stagedMap)
+        .filter(([entryId, subTeacherId]) => {
+          if (parseInt(entryId) === entry.id || !subTeacherId) return false
+          const other = emptySlots.find(e => e.id === parseInt(entryId))
+          return other && other.period_id === entry.period_id
+        })
+        .map(([, subTeacherId]) => parseInt(subTeacherId))
     )
+
+    const free = teachers.filter(t =>
+      !busyTeacherIds.has(t.id) &&
+      !absentTeacherIds.includes(t.id) &&
+      !(t.unavailable_period_ids || []).includes(entry.period_id) &&
+      !alreadyStagedThisPeriod.has(t.id)
+    )
+
+    const byLightestLoad = (a, b) => (loadByTeacherId.get(a.id) || 0) - (loadByTeacherId.get(b.id) || 0)
+
+    const suggested = free
+      .filter(t => (t.qualified_subject_ids || []).includes(entry.subject_id))
+      .sort(byLightestLoad)
+    const suggestedIds = new Set(suggested.map(t => t.id))
+    const others = free.filter(t => !suggestedIds.has(t.id)).sort(byLightestLoad)
+
+    return { suggested, others }
   }
+
+  const getRankedTeachers = (entry) => rankTeachers(entry, substitutions)
+
+  // Auto-fill each empty slot with its top suggested candidate (qualified
+  // + free + lightest-loaded) as soon as it appears, so the admin starts
+  // from a sensible default instead of a blank picker — this is what
+  // actually saves the "who can even teach Math right now" lookup by
+  // hand. Only fills slots that don't already have a choice, so it never
+  // clobbers a manual pick, and only fires when the slot has no
+  // substitute yet (not on every keystroke/render). Fills slots in period
+  // order and re-ranks against `next` (not the outer `substitutions`
+  // state) on every iteration, so two simultaneous gaps at the same
+  // period never both land on the same suggested substitute.
+  useEffect(() => {
+    setSubstitutions(prev => {
+      let changed = false
+      const next = { ...prev }
+      for (const entry of emptySlots) {
+        if (next[entry.id]) continue
+        const { suggested } = rankTeachers(entry, next)
+        if (suggested.length > 0) {
+          next[entry.id] = String(suggested[0].id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emptySlots])
 
   const saveSubstitutions = async () => {
     if (Object.keys(substitutions).length === 0) return
@@ -225,8 +303,10 @@ export default function SubstitutionsTab({ schoolId, teachers, classGroups }) {
                     const period = periods.find(p => p.id === entry.period_id)
                     const classGroup = classGroups.find(c => c.id === entry.class_group_id)
                     const absentTeacher = teachers.find(t => t.id === entry.teacher_id)
-                    const availableTeachers = getAvailableTeachers(entry.period_id)
-                    
+                    const { suggested, others } = getRankedTeachers(entry)
+                    const currentPick = substitutions[entry.id]
+                    const pickIsSuggested = currentPick && suggested.some(t => String(t.id) === String(currentPick))
+
                     return (
                       <div key={entry.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
@@ -235,17 +315,38 @@ export default function SubstitutionsTab({ schoolId, teachers, classGroups }) {
                             {period?.label || `Period ${period?.order}`} • Absent: {absentTeacher?.name}
                           </div>
                         </div>
-                        <div className="min-w-[200px]">
+                        <div className="min-w-[220px]">
                           <select
-                            value={substitutions[entry.id] || ''}
+                            value={currentPick || ''}
                             onChange={(e) => handleSubstituteChange(entry.id, e.target.value)}
                             className="w-full rounded border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                           >
                             <option value="">-- Assign Substitute --</option>
-                            {availableTeachers.map(t => (
-                              <option key={t.id} value={t.id}>{t.name}</option>
-                            ))}
+                            {suggested.length > 0 && (
+                              <optgroup label="Suggested (qualified & free)">
+                                {suggested.map(t => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {others.length > 0 && (
+                              <optgroup label="Other available teachers">
+                                {others.map(t => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
+                          {currentPick && (
+                            <p className={`mt-1 text-xs ${pickIsSuggested ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {pickIsSuggested
+                                ? 'Suggested — qualified for this subject and free at this period'
+                                : 'Not qualified for this subject — pick a suggested teacher above if one is free'}
+                            </p>
+                          )}
+                          {suggested.length === 0 && others.length === 0 && (
+                            <p className="mt-1 text-xs text-red-600">No free teachers found for this period.</p>
+                          )}
                         </div>
                       </div>
                     )

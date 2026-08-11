@@ -72,7 +72,7 @@ export default function RoomsPanel({ schoolId }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Room name (e.g. Lab 1)"
-          className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
         />
         <input
           value={capacity}
@@ -80,15 +80,15 @@ export default function RoomsPanel({ schoolId }) {
           type="number"
           min="0"
           placeholder="Capacity"
-          className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
         />
         <input
           value={roomType}
           onChange={(e) => setRoomType(e.target.value)}
           placeholder="Type (e.g. lab, regular)"
-          className="w-44 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          className="w-44 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
         />
-        <button className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+        <button className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
           Add
         </button>
       </form>

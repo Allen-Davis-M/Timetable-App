@@ -162,7 +162,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
           />
           <button
             disabled={submitting}
-            className="rounded-md bg-slate-900 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {submitting ? 'Adding…' : 'Add'}
           </button>
@@ -266,12 +266,12 @@ function ConstraintCard({
             value={editText}
             onChange={(e) => setEditText(e.target.value)}
             rows={3}
-            className="w-full rounded border border-slate-300 p-1.5 text-sm focus:border-slate-500 focus:outline-none"
+            className="w-full rounded border border-slate-300 p-1.5 text-sm focus:border-indigo-500 focus:outline-none"
           />
           <div className="flex gap-1.5">
             <button
               onClick={() => onSaveEdit(editText)}
-              className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
+              className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
             >
               Save
             </button>
@@ -306,7 +306,7 @@ function ConstraintCard({
               <div className="mt-1.5 flex gap-1.5">
                 <button
                   onClick={() => onSaveScope(selectedIds)}
-                  className="rounded bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
+                  className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
                 >
                   Save
                 </button>

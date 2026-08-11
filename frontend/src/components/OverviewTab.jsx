@@ -150,7 +150,7 @@ function StepRow({ index, step, current, onClick }) {
   return (
     <div
       className={`flex items-center gap-4 rounded-lg border p-4 ${
-        current ? 'border-slate-900 bg-slate-50' : 'border-slate-200'
+        current ? 'border-indigo-600 bg-indigo-50/60' : 'border-slate-200'
       }`}
     >
       <div
@@ -158,7 +158,7 @@ function StepRow({ index, step, current, onClick }) {
           step.done
             ? 'bg-emerald-600 text-white'
             : current
-              ? 'bg-slate-900 text-white'
+              ? 'bg-indigo-600 text-white'
               : 'bg-slate-100 text-slate-400'
         }`}
       >
@@ -174,7 +174,7 @@ function StepRow({ index, step, current, onClick }) {
             </span>
           )}
           {current && (
-            <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+            <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
               Do this next
             </span>
           )}
@@ -186,7 +186,7 @@ function StepRow({ index, step, current, onClick }) {
         onClick={onClick}
         className={`flex-none rounded-md px-3 py-1.5 text-sm font-medium ${
           current
-            ? 'bg-slate-900 text-white hover:bg-slate-700'
+            ? 'bg-indigo-600 text-white hover:bg-indigo-700'
             : 'border border-slate-300 text-slate-700 hover:bg-slate-50'
         }`}
       >

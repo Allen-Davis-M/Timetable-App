@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { api } from '../api'
+import SubstitutionsTab from './SubstitutionsTab'
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const POLL_INTERVAL_MS = 1500
@@ -36,8 +38,16 @@ const POLL_INTERVAL_MS = 1500
  * that message is what ends up in `error` and shown below the grid.
  * Editing is section-view-only: the "By Teacher" view mixes entries from
  * several different classes, where "move this" is ambiguous.
+ *
+ * `page` toggles between this generated-schedule view and Substitutions
+ * (SubstitutionsTab) — they used to be separate top-level tabs, but
+ * Substitutions is really a sibling lens on the same generated timetable
+ * (same data: entries, periods, teachers), not a distinct workflow, so it
+ * lives here as a second view instead of adding to the top nav's tab
+ * count.
  */
 export default function TimetableTab({ schoolId, classGroup, classGroups, teachers, readOnly = false }) {
+  const [page, setPage] = useState('schedule') // 'schedule' | 'substitutions'
   const [periods, setPeriods] = useState([])
   const [timetable, setTimetable] = useState(null) // latest TimetableOut from the backend
   const [generating, setGenerating] = useState(false)
@@ -207,6 +217,25 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="inline-flex w-fit rounded-md border border-slate-300 p-0.5 text-xs">
+        <button
+          onClick={() => setPage('schedule')}
+          className={`rounded px-3 py-1.5 font-medium ${page === 'schedule' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}
+        >
+          Schedule
+        </button>
+        <button
+          onClick={() => setPage('substitutions')}
+          className={`rounded px-3 py-1.5 font-medium ${page === 'substitutions' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}
+        >
+          Substitutions
+        </button>
+      </div>
+
+      {page === 'substitutions' ? (
+        <SubstitutionsTab schoolId={schoolId} classGroups={classGroups} teachers={teachers} />
+      ) : (
+        <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-medium">Generate timetable</h3>
@@ -220,24 +249,31 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
           </p>
         </div>
         {!readOnly && (
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={handleGenerate}
             disabled={isGenerating}
-            className="flex items-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {isGenerating ? 'Generating…' : 'Generate Timetable'}
-          </button>
+          </motion.button>
         )}
       </div>
 
       <div className="h-px bg-slate-200" />
 
       {isGenerating && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-sm text-slate-500">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="flex flex-col items-center justify-center gap-3 py-16 text-sm text-slate-500"
+        >
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
           Solving the schedule — this runs in the background, so it's safe
           to keep working elsewhere and come back.
-        </div>
+        </motion.div>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -270,19 +306,24 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
       )}
 
       {solved && (
-        <div className="flex flex-col gap-4">
+        <motion.div
+          key={timetable.id}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+          className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <div className="inline-flex rounded-md border border-slate-300 p-0.5 text-xs">
                 <button
                   onClick={() => setView('section')}
-                  className={`rounded px-3 py-1 ${view === 'section' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                  className={`rounded px-3 py-1 ${view === 'section' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}
                 >
                   By Section
                 </button>
                 <button
                   onClick={() => setView('teacher')}
-                  className={`rounded px-3 py-1 ${view === 'teacher' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                  className={`rounded px-3 py-1 ${view === 'teacher' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}
                 >
                   By Teacher
                 </button>
@@ -357,7 +398,9 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
                       return (
                         <td
                           key={d}
-                          className={`border border-slate-200 px-3 py-2 ${editable ? 'align-top' : ''}`}
+                          className={`border border-slate-200 px-3 py-2 transition-colors ${editable ? 'align-top' : ''} ${
+                            singleEntry || isBatched ? 'hover:bg-slate-50' : ''
+                          }`}
                           onDragOver={editable && !isBatched ? (e) => e.preventDefault() : undefined}
                           onDrop={editable && !isBatched ? () => handleDrop(d, order) : undefined}
                         >
@@ -422,7 +465,7 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
               </tbody>
             </table>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {!isGenerating && !timetable && (
@@ -430,6 +473,8 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
           <p className="text-sm">No timetable generated yet for this school.</p>
           <p className="text-xs">Add subjects and constraints, then hit Generate.</p>
         </div>
+      )}
+        </>
       )}
     </div>
   )

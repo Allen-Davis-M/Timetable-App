@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { api, setToken } from '../api'
 
 // Set by whoever deploys this (see docs/DEPLOYMENT.md) after creating a
@@ -107,7 +108,12 @@ export default function AuthPage({ onAuthenticated, onBack }) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-8">
-      <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: 'easeOut' }}
+        className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm"
+      >
         <div className="mb-6 text-center">
           {onBack ? (
             <button
@@ -148,16 +154,24 @@ export default function AuthPage({ onAuthenticated, onBack }) {
         ) : null}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          {!isLogin && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Name</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-              />
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {!isLogin && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <label className="mb-1 block text-xs font-medium text-slate-500">Name</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Email</label>
             <input
@@ -166,7 +180,7 @@ export default function AuthPage({ onAuthenticated, onBack }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@school.edu"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
           </div>
           <div>
@@ -178,19 +192,33 @@ export default function AuthPage({ onAuthenticated, onBack }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          <AnimatePresence>
+            {error && (
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.15 }}
+                className="overflow-hidden text-sm text-red-600"
+              >
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
 
-          <button
+          <motion.button
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
             type="submit"
             disabled={loading}
-            className="mt-1 rounded-md bg-slate-900 py-2.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="mt-1 rounded-md bg-indigo-600 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {loading ? 'Please wait…' : isLogin ? 'Sign in' : 'Create account'}
-          </button>
+          </motion.button>
         </form>
 
         <p className="mt-4 text-center text-sm">
@@ -198,12 +226,12 @@ export default function AuthPage({ onAuthenticated, onBack }) {
           <button
             type="button"
             onClick={() => setMode(isLogin ? 'signup' : 'login')}
-            className="text-slate-900 underline underline-offset-2"
+            className="text-indigo-600 underline underline-offset-2 hover:text-indigo-700"
           >
             {isLogin ? 'Sign up' : 'Sign in'}
           </button>
         </p>
-      </div>
+      </motion.div>
     </div>
   )
 }

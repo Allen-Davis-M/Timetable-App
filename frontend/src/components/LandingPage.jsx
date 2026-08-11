@@ -134,7 +134,7 @@ function LandingNav({ onGetStarted }) {
     <div className="sticky top-0 z-30 border-b border-slate-100 bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-sm font-semibold text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-600 text-sm font-semibold text-white">
             T
           </div>
           <span className="text-sm font-semibold">Timetable</span>
@@ -150,7 +150,7 @@ function LandingNav({ onGetStarted }) {
           </button>
           <button
             onClick={onGetStarted}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             Get started free
           </button>
@@ -182,7 +182,7 @@ function Hero({ onGetStarted }) {
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
               onClick={onGetStarted}
-              className="rounded-md bg-slate-900 px-6 py-3 text-sm font-medium text-white hover:bg-slate-700"
+              className="rounded-md bg-indigo-600 px-6 py-3 text-sm font-medium text-white hover:bg-indigo-700"
             >
               Get started free
             </button>
@@ -218,7 +218,7 @@ function TimetableMockup() {
   const rows = ['P1', 'P2', 'P3', 'P4', 'P5']
   const cols = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
   const subjects = ['Math', 'Science', 'English', 'PE', 'Art', 'History', 'Music']
-  const colors = ['bg-slate-900', 'bg-emerald-600', 'bg-amber-500', 'bg-sky-600', 'bg-violet-600']
+  const colors = ['bg-indigo-600', 'bg-emerald-600', 'bg-amber-500', 'bg-sky-600', 'bg-violet-600']
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/60">
@@ -321,7 +321,7 @@ function Features() {
             whileHover={{ y: -4 }}
           >
             <GlowCard className="rounded-xl border border-slate-200 p-6 transition-shadow hover:shadow-lg hover:shadow-slate-200/60">
-              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-lg text-white">
+              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-lg text-white">
                 {f.icon}
               </div>
               <h3 className="font-medium">{f.title}</h3>
@@ -404,11 +404,11 @@ function Pricing({ onGetStarted }) {
             variants={fadeUp}
             transition={{ duration: 0.4, delay: i * 0.1 }}
             className={`rounded-xl border p-7 ${
-              tier.highlighted ? 'border-slate-900 shadow-xl shadow-slate-200/60' : 'border-slate-200'
+              tier.highlighted ? 'border-indigo-600 shadow-xl shadow-slate-200/60' : 'border-slate-200'
             }`}
           >
             {tier.highlighted && (
-              <span className="mb-3 inline-block rounded-full bg-slate-900 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+              <span className="mb-3 inline-block rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
                 Most popular
               </span>
             )}
@@ -430,7 +430,7 @@ function Pricing({ onGetStarted }) {
               onClick={onGetStarted}
               className={`mt-7 w-full rounded-md px-4 py-2.5 text-sm font-medium ${
                 tier.highlighted
-                  ? 'bg-slate-900 text-white hover:bg-slate-700'
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-700'
                   : 'border border-slate-300 text-slate-700 hover:bg-slate-50'
               }`}
             >
@@ -487,7 +487,7 @@ function FinalCta({ onGetStarted }) {
         viewport={{ once: true, amount: 0.4 }}
         variants={fadeUp}
         transition={{ duration: 0.5 }}
-        className="rounded-2xl bg-slate-900 px-8 py-16 text-center text-white"
+        className="rounded-2xl bg-indigo-600 px-8 py-16 text-center text-white"
       >
         <h2 className="text-3xl font-semibold tracking-tight">Ready to stop building timetables by hand?</h2>
         <p className="mx-auto mt-3 max-w-md text-slate-300">

@@ -7,6 +7,8 @@ public keys and our configured client ID, then finds-or-creates a User by
 email. No password is ever involved for that path — `hashed_password` stays
 null for Google-only accounts (the User model already allows this).
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -17,6 +19,8 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.auth import GoogleLoginRequest, LoginRequest, SignupRequest, TokenResponse, UserOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -65,7 +69,14 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
         claims = google_id_token.verify_oauth2_token(
             payload.credential, google_requests.Request(), settings.google_client_id
         )
-    except ValueError:
+    except ValueError as exc:
+        # verify_oauth2_token collapses every failure mode (audience
+        # mismatch, expired token, bad signature, clock skew, ...) into a
+        # generic ValueError — logging the real message here is the only
+        # way to tell which one it actually was, since the client only
+        # ever sees the generic 401 below (a client shouldn't learn
+        # *why* a token was rejected, e.g. clock skew details).
+        logger.warning("Google sign-in token verification failed: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid Google sign-in token")
 
     email = claims.get("email")

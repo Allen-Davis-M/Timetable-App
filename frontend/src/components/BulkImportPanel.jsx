@@ -65,7 +65,7 @@ export default function BulkImportPanel({ schoolId, onImported }) {
             setResult(null)
             setError(null)
           }}
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none disabled:opacity-60"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
         >
           {RESOURCES.map((r) => (
             <option key={r.value} value={r.value}>
@@ -82,7 +82,7 @@ export default function BulkImportPanel({ schoolId, onImported }) {
         />
         <button
           disabled={!file || uploading}
-          className="rounded-md bg-slate-900 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           {uploading ? 'Importing…' : 'Import'}
         </button>

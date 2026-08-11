@@ -84,25 +84,38 @@ is running. Currently available:
 - `/api/solver/test` — diagnostic endpoint that runs a small built-in
   OR-Tools example, useful to confirm the solver install works
 
-Not yet built: Google sign-in (needs an OAuth client only you can create),
-CSV/Excel bulk import, room assignment in the generated timetable
-(room_id is left null for now).
+Also built (this section previously said "not yet"): CSV/Excel bulk
+import for subjects, rooms, teachers, and class groups
+(`/api/{resource}/bulk-import`, `app/services/bulk_import.py`), and
+best-effort room assignment as a second solver pass
+(`_assign_rooms` in `app/services/solver.py`). Not yet built: Google
+sign-in (needs an OAuth client only you can create).
 
 ## NLP constraints
 
-`/api/constraints/parse` (`app/services/constraint_parser.py`) is a
-pattern-matching parser — not an LLM call — that recognizes common
-phrasings: "max N periods a week" (→ workload limit), day/availability
-words (→ availability), everything else (→ generic scheduling rule). It
-also tries to match a teacher by name against the school's teacher list.
+`POST /api/constraints/parse` tries an LLM call first
+(`app/services/llm_constraint_parser.py`, calls Claude with the school's
+real teacher/subject/class-group names so it only ever returns names that
+actually exist) and falls back to a pattern-matching parser
+(`app/services/constraint_parser.py`) if no `ANTHROPIC_API_KEY` is set or
+the call fails for any reason — same input/output shape either way, so
+the rest of the router doesn't care which one produced a given result.
 
-Only **workload limit** constraints with a matched teacher are actually
-enforced right now — the parser sets `Teacher.max_periods_per_week`
-directly, which the solver already respects. Availability and generic
-rules are recorded (visible in the Constraints tab) but not yet fed into
-the CP-SAT model — the UI says so on each card. Swapping the parser for a
-real LLM call later doesn't require touching anything else, since the
-input/output shape stays the same.
+Most constraint types are read directly by the solver
+(`app/services/solver.py`), not just recorded: workload limits
+(`Teacher.max_periods_per_week`), availability
+(`Teacher.unavailable_period_ids`, e.g. "not available on Fridays"),
+subject-vs-first/last-period placement, subject-vs-day placement, max
+consecutive periods (per subject or per teacher), minimum gap between two
+subjects, and subject-sequencing ("Math can't immediately follow PE") are
+all hard constraints in the CP-SAT model — see `backend/tests/test_solver.py`
+for a couple of regression tests proving the availability and placement
+cases actually hold. The one exception is the catch-all
+`scheduling_rule` type: free-text that doesn't match any of the specific
+patterns above is still saved and shown in the Constraints tab, but isn't
+mechanically enforceable, so the UI marks that one honestly as "Not yet
+enforced by the solver" (`ConstraintOut.enforced`, computed in
+`app/routers/constraints.py`).
 
 ## Frontend screens (current)
 
@@ -135,21 +148,22 @@ comment saying so and is safe to delete.
 ## Status
 
 Full auth (signup/login/JWT) is in place, schools are scoped to their
-owner, and the frontend matches the uploaded design end-to-end: sidebar
-grade/section tree, combined subjects+teachers data entry, NLP-style
-constraint input, and a generate flow with By Section / By Teacher views.
-The real solver reads a school's actual data from the database, builds a
-CP-SAT model (subject requirements met exactly, no teacher/class
-double-booking, teacher max-hours respected — including hours set via the
-constraint parser), and either returns a conflict-free schedule or a
-clear reason it couldn't. Everything has been verified against the real
-backend through the same dev-server proxy path the browser uses,
-including auth, ownership scoping, and constraint parsing actually
-affecting generation output. Scope is intentionally generic (not locked
-to one curriculum or school type yet) — see `docs/ARCHITECTURE.md` for
-the data model reasoning and open decisions.
+owner (plus invite-based admin/viewer memberships), and the frontend
+matches the uploaded design end-to-end: sidebar grade/section tree,
+combined subjects+teachers data entry, NLP-style constraint input, and a
+generate flow with By Section / By Teacher views. The real solver reads a
+school's actual data from the database, builds a CP-SAT model (subject
+requirements met exactly, no teacher/class double-booking, teacher
+max-hours and availability respected, plus the placement/consecutive/
+sequencing constraint types described above), assigns rooms as a
+best-effort second pass, and either returns a conflict-free schedule or a
+clear reason it couldn't. CSV/Excel bulk import, Excel/PDF export, and a
+manual same-day substitution log are also built. Scope is intentionally
+generic (not locked to one curriculum or school type yet) — see
+`docs/ARCHITECTURE.md` for the data model reasoning and open decisions.
 
 Next up, roughly in priority order: Google sign-in (once you've created
-OAuth credentials), CSV/Excel bulk import, wiring availability/scheduling-
-rule constraints into the solver (only workload limits are enforced
-today), and room assignment.
+OAuth credentials), per-resource ownership checks now that multiple
+admins per school are possible (see "Open decisions" in
+`docs/ARCHITECTURE.md`), and diagnosing infeasibility caused by an
+*interaction* between several constraints rather than one alone.

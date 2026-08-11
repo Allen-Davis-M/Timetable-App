@@ -1167,3 +1167,101 @@ No frontend UI was built for this yet (there was no existing
 pass only fixes the backend crash and makes the API correct and
 callable. Building an actual "log a substitution" screen is a follow-up
 if the user wants one.
+
+## Design polish pass: Framer Motion across the whole app shell
+
+Previously, Framer Motion was only used on the marketing `LandingPage.jsx`
+(hero/features/pricing flourishes from earlier work). This pass extends
+it into the actual product — sidebar, tab navigation, Data Entry, Auth,
+and the timetable grid — using 21st.dev's component catalog (via its MCP
+connector) purely as design reference for patterns like animated
+active-indicator bars and staggered row entrances, hand-implemented
+against this app's existing Tailwind conventions rather than pulling in
+a parallel shadcn/ui dependency tree that would fight the current setup.
+
+The guiding constraint throughout: this is admin software for teachers
+and principals, not a marketing site, so every animation is short
+(120-250ms), uses `easeOut` or a stiff/high-damping spring (not bouncy),
+and existing keyboard/click behavior was left untouched — motion wraps
+the existing DOM structure, it doesn't replace how anything works.
+
+- **Sidebar.jsx**: the selected section's highlight is one shared
+  `motion.div` (`layoutId="sidebar-active-pill"`) that animates between
+  positions on selection instead of teleporting; grade groups now
+  expand/collapse with a real height animation (`AnimatePresence` +
+  `height: 'auto'`) instead of an instant show/hide; grade groups and
+  the "+ Add" panel fade in with a small stagger on mount.
+- **App.jsx**: the active tab has the same shared-element pill trick
+  (`layoutId="tab-active-pill"`); switching tabs now cross-fades the
+  content instead of hard-swapping; the "New school" modal animates in
+  (backdrop fade + panel scale) instead of appearing instantly.
+- **DataEntryTab.jsx**: the Add Teacher modal has the same fade+scale
+  entrance as the school modal; subject rows stagger in on load (capped
+  delay so a 50-subject school doesn't get a slow cascade); teacher
+  chips animate in/out via `AnimatePresence` when added/removed instead
+  of popping; the "+ Add" teacher dropdown fades/scales in.
+- **AuthPage.jsx**: the auth card fades/slides in on mount; the Name
+  field (signup-only) animates its height in/out when switching between
+  login and signup instead of instantly appearing; the error message
+  animates in with a height transition; the submit button has a subtle
+  hover/tap scale.
+- **TimetableTab.jsx**: kept intentionally light-touch — this view has
+  native HTML5 drag-and-drop for moving/locking timetable entries, and
+  wrapping individual draggable cells in `motion.div` risked fighting
+  the browser's own drag events. Instead: the generated grid fades/slides
+  in as a whole when a solve completes (keyed on `timetable.id`, so
+  regenerating re-triggers it), the "Generating…" spinner block fades in,
+  the Generate button has a hover/tap scale, and filled cells get a
+  plain CSS `hover:bg-slate-50` transition (no Framer Motion) for a
+  subtle elevation cue without touching the drag machinery at all.
+
+No backend changes in this pass — purely a frontend/visual update.
+
+## Adding color: indigo accent replacing the all-black/slate look
+
+The whole product (landing page, auth, and every in-app tool) previously
+used `slate-900` (near-black) for every primary button, active state,
+and focus ring — a deliberate monochrome minimalist look from earlier
+work, but the user asked for a bit more color throughout while keeping
+the same minimalist design and UX (no new layouts, no new components,
+same information density).
+
+Did this as a systematic color-token swap rather than a redesign:
+`bg-slate-900` → `bg-indigo-600`, `hover:bg-slate-700` →
+`hover:bg-indigo-700`, `border-slate-900` → `border-indigo-600`, and
+`focus:border-slate-500` → `focus:border-indigo-500`, applied across
+every `frontend/src/**/*.jsx` file. This covers every primary button,
+active tab/toggle state, selected-item border, and form focus ring in
+one pass, since those were consistently the only things using those
+four exact class combinations — verified via `grep` before touching
+anything, no plain body/heading text used these specific combinations
+(headings still use `text-slate-900` for legibility, untouched).
+
+One deliberate exception: the modal backdrop scrim (`bg-slate-900/40`
+behind the New School / Add Teacher modals) was excluded from the sweep
+and stays dark/neutral — a colored overlay behind a modal reads as a
+mistake, not a design choice, so this one stayed black.
+
+A few spots needed judgment rather than a blind swap, since they used
+`bg-slate-100`/`bg-slate-50` for a selected/active *background* rather
+than `bg-slate-900`, which the automated pass didn't touch:
+- Sidebar's selected-section highlight: `bg-slate-100` → `bg-indigo-50`,
+  label color `text-slate-900` → `text-indigo-900`.
+- OverviewTab's "current step" checklist row: `bg-slate-50` →
+  `bg-indigo-50/60`.
+- AuthPage's "Sign up"/"Sign in" toggle link: `text-slate-900` →
+  `text-indigo-600` (it's a link, so it should read as one).
+
+LandingPage.jsx already had its own accent variety from earlier
+Aceternity-style work (the hero timetable mockup already cycles through
+indigo/emerald/amber/sky/violet per cell) — the sweep brought its
+CTAs, feature icons, and the highlighted pricing tier in line with the
+same indigo used everywhere else, so the marketing page and the actual
+product now read as the same brand rather than two different color
+schemes.
+
+Semantic colors were deliberately left alone: emerald for
+success/"preferred teacher"/ready states, amber for warnings, red for
+destructive actions/errors. Adding color meant giving the *interactive*
+parts of the app a personality, not recoloring the states that already
+carry meaning through color.

@@ -56,7 +56,7 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
             placeholder="Grade, Semester, ..."
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -65,7 +65,7 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             value={sections}
             onChange={(e) => setSections(e.target.value)}
             placeholder="A-D, or A, B, C"
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
           />
         </div>
       </div>
@@ -76,7 +76,7 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             type="number"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -85,7 +85,7 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             type="number"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
           />
         </div>
       </div>
@@ -103,7 +103,7 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
 
       <button
         disabled={newPairs.length === 0 || submitting}
-        className="w-fit rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        className="w-fit rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
       >
         {submitting ? 'Creating…' : `Create ${newPairs.length || ''} section${newPairs.length === 1 ? '' : 's'}`.trim()}
       </button>

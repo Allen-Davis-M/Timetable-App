@@ -211,4 +211,8 @@ export const api = {
   // likely isn't logged in yet.
   previewInvite: (token) => get(`/invites/${token}`),
   acceptInvite: (token, data) => post(`/invites/${token}/accept`, data),
+
+  // Substitutions
+  listSubstitutionLogs: (schoolId) => get(`/schools/${schoolId}/substitutions`),
+  saveSubstitutionLog: (schoolId, data) => post(`/schools/${schoolId}/substitutions`, data),
 };

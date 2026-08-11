@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../api'
 import BulkImportPanel from './BulkImportPanel'
 import PeriodsPanel from './PeriodsPanel'
 import RoomsPanel from './RoomsPanel'
-
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 
 /**
  * The main data-entry screen: subjects, how many periods/week the
@@ -33,10 +32,19 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
   const [periods, setPeriods] = useState([])
   const [rooms, setRooms] = useState([])
   const [openDropdownId, setOpenDropdownId] = useState(null)
-  const [showPeriods, setShowPeriods] = useState(false)
-  const [showRooms, setShowRooms] = useState(false)
+  // Periods, Rooms, and Bulk import are grouped under one disclosure (see
+  // the "Setup" section below) rather than three separate toggles.
+  const [showSetup, setShowSetup] = useState(false)
   const [addTeacherOpen, setAddTeacherOpen] = useState(false)
   const [error, setError] = useState(null)
+  // Which subject rows have their "advanced" fields (room type, and for
+  // colleges, credits/lab batches) expanded. Collapsed by default per row
+  // — most subjects never set these, so showing two extra inputs under
+  // every single subject name was pure clutter for the common case. A row
+  // that already has an advanced field set starts expanded (see the
+  // initializer below, computed once subjects first load) so existing
+  // settings are never hidden without a trace.
+  const [expandedAdvanced, setExpandedAdvanced] = useState(new Set())
   // Guards against the "quick setup" button firing 40 createPeriod calls
   // once, then another 40 if double-clicked before the first batch lands.
   const [settingUpPeriods, setSettingUpPeriods] = useState(false)
@@ -64,6 +72,33 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
   useEffect(() => {
     load()
   }, [schoolId, classGroupId])
+
+  // Auto-expand a subject's advanced fields if it already has one set
+  // (e.g. loading a school that was set up before this collapsed view
+  // existed, or one imported via bulk-import's required_room_type
+  // column) — collapsing it would hide a real setting, not just reduce
+  // clutter. Only adds ids in; never removes one a user collapsed by
+  // hand, so manually collapsing a row sticks even if you blur/re-render.
+  useEffect(() => {
+    setExpandedAdvanced((prev) => {
+      const withAdvanced = subjects.filter(
+        (s) => s.required_room_type || s.credits || (s.lab_batch_count && s.lab_batch_count >= 2)
+      )
+      if (withAdvanced.every((s) => prev.has(s.id))) return prev
+      const next = new Set(prev)
+      withAdvanced.forEach((s) => next.add(s.id))
+      return next
+    })
+  }, [subjects])
+
+  function toggleAdvanced(subjectId) {
+    setExpandedAdvanced((prev) => {
+      const next = new Set(prev)
+      if (next.has(subjectId)) next.delete(subjectId)
+      else next.add(subjectId)
+      return next
+    })
+  }
 
   async function handleQuickSetupPeriods() {
     if (settingUpPeriods) return
@@ -93,8 +128,17 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
 
   async function handleAddSubject() {
     try {
-      await api.createSubject({ school_id: schoolId, name: 'New subject' })
-      await load()
+      // Append the created row locally instead of calling load() (which
+      // fires 5 parallel GETs — subjects, teachers, requirements, periods,
+      // rooms). A brand-new subject can't affect any of those other four
+      // lists, so re-fetching all of them here was pure overhead — on a
+      // remote/hosted database (real network round-trip per request,
+      // e.g. Supabase) that overhead is what made "+ Add subject" feel
+      // like it hung for a few seconds. The POST response already has the
+      // full row (id included), so this is a plain state append, not a
+      // guess at what the server assigned.
+      const created = await api.createSubject({ school_id: schoolId, name: 'New subject' })
+      setSubjects((prev) => [...prev, created])
     } catch (err) {
       setError(err.message)
     }
@@ -270,19 +314,27 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
         )}
       </div>
 
-      {addTeacherOpen && (
-        <AddTeacherModal
-          schoolId={schoolId}
-          subjects={subjects}
-          onClose={() => setAddTeacherOpen(false)}
-          onAdded={async () => {
-            setAddTeacherOpen(false)
-            await load()
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {addTeacherOpen && (
+          <AddTeacherModal
+            schoolId={schoolId}
+            subjects={subjects}
+            onClose={() => setAddTeacherOpen(false)}
+            onAdded={async () => {
+              setAddTeacherOpen(false)
+              await load()
+            }}
+          />
+        )}
+      </AnimatePresence>
 
-      {periods.length === 0 ? (
+      {/* The "no periods yet" case stays outside the collapsed Setup
+          section, always visible — it's a hard blocker (the solver can't
+          run at all without periods), not a one-time-setup convenience,
+          so it shouldn't be hideable behind a click. Quick setup handles
+          it in one click for the common Mon-Fri case; once periods exist,
+          managing them moves into Setup below like Rooms and Bulk import. */}
+      {periods.length === 0 && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
           <p className="mb-2">
             No periods set up yet — the solver needs these before it can generate a
@@ -298,44 +350,46 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
             </button>
           )}
         </div>
-      ) : (
-        <button
-          onClick={() => setShowPeriods((v) => !v)}
-          className="w-fit text-xs text-slate-500 underline underline-offset-2"
-        >
-          {periods.length} periods configured ({DAY_LABELS.length} days) — {showPeriods ? 'hide' : 'manage'}
-        </button>
-      )}
-      {showPeriods && (
-        <div className="rounded-md border border-slate-200 p-4">
-          <PeriodsPanel schoolId={schoolId} />
-        </div>
       )}
 
+      {/* Periods (once configured), Rooms, and Bulk import are all
+          one-time setup actions, not the day-to-day task this tab is
+          for — grouped under a single disclosure instead of three
+          separate always-present rows, so the subject table below is the
+          first thing you see once a school is actually set up. */}
       <button
-        onClick={() => setShowRooms((v) => !v)}
+        onClick={() => setShowSetup((v) => !v)}
         className="w-fit text-xs text-slate-500 underline underline-offset-2"
       >
-        {rooms.length} room{rooms.length === 1 ? '' : 's'} configured — {showRooms ? 'hide' : 'manage'}
+        Setup — {periods.length} period{periods.length === 1 ? '' : 's'}, {rooms.length} room
+        {rooms.length === 1 ? '' : 's'}, bulk import — {showSetup ? 'hide' : 'manage'}
       </button>
-      {showRooms && (
-        <div className="rounded-md border border-slate-200 p-4">
-          <RoomsPanel schoolId={schoolId} />
+      {showSetup && (
+        <div className="divide-y divide-slate-200 rounded-md border border-slate-200">
+          {periods.length > 0 && (
+            <div className="p-4">
+              <PeriodsPanel schoolId={schoolId} />
+            </div>
+          )}
+          <div className="p-4">
+            <RoomsPanel schoolId={schoolId} />
+          </div>
+          {!readOnly && (
+            <div className="p-4">
+              <BulkImportPanel
+                schoolId={schoolId}
+                onImported={async () => {
+                  await load()
+                  // Class groups (sections) live in the sidebar's own state in
+                  // App.jsx, not here — refresh that too so a bulk-imported
+                  // section shows up without a manual page reload. Harmless to
+                  // call after every import, not just a class-groups one.
+                  if (onClassGroupsChanged) await onClassGroupsChanged()
+                }}
+              />
+            </div>
+          )}
         </div>
-      )}
-
-      {!readOnly && (
-        <BulkImportPanel
-          schoolId={schoolId}
-          onImported={async () => {
-            await load()
-            // Class groups (sections) live in the sidebar's own state in
-            // App.jsx, not here — refresh that too so a bulk-imported
-            // section shows up without a manual page reload. Harmless to
-            // call after every import, not just a class-groups one.
-            if (onClassGroupsChanged) await onClassGroupsChanged()
-          }}
-        />
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -351,8 +405,15 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ subject, requirement, periodsPerWeek, qualifiedTeachers, availableTeachers, preferredTeacherId, valid }) => (
-            <tr key={subject.id} className="border-b border-slate-100">
+          {rows.map(({ subject, requirement, periodsPerWeek, qualifiedTeachers, availableTeachers, preferredTeacherId, valid }, i) => (
+            <motion.tr
+              key={subject.id}
+              layout="position"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, delay: Math.min(i, 10) * 0.02, ease: 'easeOut' }}
+              className="border-b border-slate-100"
+            >
               <td className="py-2 pr-2">
                 <label htmlFor={`subject-name-${subject.id}`} className="sr-only">
                   Subject name
@@ -364,58 +425,78 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
                   onBlur={(e) => e.target.value !== subject.name && handleUpdateName(subject.id, e.target.value)}
                   className="w-full rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none disabled:bg-transparent disabled:text-slate-700"
                 />
-                <label htmlFor={`subject-room-type-${subject.id}`} className="sr-only">
-                  Required room type (optional)
-                </label>
-                <input
-                  id={`subject-room-type-${subject.id}`}
-                  defaultValue={subject.required_room_type ?? ''}
-                  disabled={readOnly}
-                  onBlur={(e) =>
-                    e.target.value !== (subject.required_room_type ?? '') &&
-                    handleUpdateRoomType(subject.id, e.target.value.trim())
-                  }
-                  placeholder="Room type (optional, e.g. lab)"
-                  title="If set, this subject can only be assigned a room whose type matches exactly"
-                  className="mt-0.5 w-full rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
-                />
-                {institutionType === 'college' && (
-                  <div className="mt-0.5 flex items-center gap-2">
-                    <label htmlFor={`subject-batches-${subject.id}`} className="text-xs text-slate-400">
-                      Split into
+                {expandedAdvanced.has(subject.id) ? (
+                  <>
+                    <label htmlFor={`subject-room-type-${subject.id}`} className="sr-only">
+                      Required room type (optional)
                     </label>
                     <input
-                      id={`subject-batches-${subject.id}`}
-                      type="number"
-                      min="0"
-                      max="10"
-                      defaultValue={subject.lab_batch_count ?? ''}
+                      id={`subject-room-type-${subject.id}`}
+                      defaultValue={subject.required_room_type ?? ''}
                       disabled={readOnly}
                       onBlur={(e) =>
-                        Number(e.target.value || 0) !== (subject.lab_batch_count ?? 0) &&
-                        handleUpdateLabBatchCount(subject.id, e.target.value)
+                        e.target.value !== (subject.required_room_type ?? '') &&
+                        handleUpdateRoomType(subject.id, e.target.value.trim())
                       }
-                      placeholder="1"
-                      title="For lab/practical subjects: split the class into this many simultaneous batches, each with its own teacher and room. Leave blank or 1 for no split."
-                      className="w-12 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                      placeholder="Room type (optional, e.g. lab)"
+                      title="If set, this subject can only be assigned a room whose type matches exactly"
+                      className="mt-0.5 w-full rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
                     />
-                    <span className="text-xs text-slate-400">batches</span>
-                    <label htmlFor={`subject-credits-${subject.id}`} className="sr-only">Credits</label>
-                    <input
-                      id={`subject-credits-${subject.id}`}
-                      type="number"
-                      min="0"
-                      defaultValue={subject.credits ?? ''}
-                      disabled={readOnly}
-                      onBlur={(e) =>
-                        Number(e.target.value || 0) !== (subject.credits ?? 0) &&
-                        handleUpdateCredits(subject.id, e.target.value)
-                      }
-                      placeholder="Credits"
-                      title="Optional — for colleges that track credits per course. Not used by the solver."
-                      className="w-16 rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
-                    />
-                  </div>
+                    {institutionType === 'college' && (
+                      <div className="mt-0.5 flex items-center gap-2">
+                        <label htmlFor={`subject-batches-${subject.id}`} className="text-xs text-slate-400">
+                          Split into
+                        </label>
+                        <input
+                          id={`subject-batches-${subject.id}`}
+                          type="number"
+                          min="0"
+                          max="10"
+                          defaultValue={subject.lab_batch_count ?? ''}
+                          disabled={readOnly}
+                          onBlur={(e) =>
+                            Number(e.target.value || 0) !== (subject.lab_batch_count ?? 0) &&
+                            handleUpdateLabBatchCount(subject.id, e.target.value)
+                          }
+                          placeholder="1"
+                          title="For lab/practical subjects: split the class into this many simultaneous batches, each with its own teacher and room. Leave blank or 1 for no split."
+                          className="w-12 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                        />
+                        <span className="text-xs text-slate-400">batches</span>
+                        <label htmlFor={`subject-credits-${subject.id}`} className="sr-only">Credits</label>
+                        <input
+                          id={`subject-credits-${subject.id}`}
+                          type="number"
+                          min="0"
+                          defaultValue={subject.credits ?? ''}
+                          disabled={readOnly}
+                          onBlur={(e) =>
+                            Number(e.target.value || 0) !== (subject.credits ?? 0) &&
+                            handleUpdateCredits(subject.id, e.target.value)
+                          }
+                          placeholder="Credits"
+                          title="Optional — for colleges that track credits per course. Not used by the solver."
+                          className="w-16 rounded px-1.5 py-0.5 text-xs text-slate-500 placeholder:text-slate-400 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                        />
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleAdvanced(subject.id)}
+                      className="mt-0.5 text-[11px] text-slate-400 underline underline-offset-2 hover:text-slate-600"
+                    >
+                      Hide advanced
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleAdvanced(subject.id)}
+                    className="mt-0.5 text-[11px] text-slate-400 underline underline-offset-2 hover:text-slate-600"
+                  >
+                    + Advanced (room type
+                    {institutionType === 'college' ? ', credits, lab batches' : ''})
+                  </button>
                 )}
               </td>
               <td className="py-2 pr-2">
@@ -427,51 +508,68 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
               </td>
               <td className="py-2 pr-2">
                 <div className="relative flex flex-wrap items-center gap-1.5">
-                  {qualifiedTeachers.map((t) => (
-                    <span
-                      key={t.id}
-                      title={t.id === preferredTeacherId ? 'Preferred teacher for this section' : undefined}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-white ${
-                        t.id === preferredTeacherId ? 'bg-emerald-700 ring-2 ring-emerald-200' : 'bg-slate-900'
-                      }`}
-                    >
-                      {t.id === preferredTeacherId && '★ '}
-                      {t.name}
-                      {!readOnly && (
-                        <button
-                          onClick={() => handleRemoveTeacher(subject.id, t)}
-                          aria-label={`Remove ${t.name} from ${subject.name}`}
-                          className="opacity-70 hover:opacity-100"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </span>
-                  ))}
+                  <AnimatePresence initial={false}>
+                    {qualifiedTeachers.map((t) => (
+                      <motion.span
+                        key={t.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.85 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.85 }}
+                        transition={{ duration: 0.15 }}
+                        title={t.id === preferredTeacherId ? 'Preferred teacher for this section' : undefined}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-white ${
+                          t.id === preferredTeacherId ? 'bg-emerald-700 ring-2 ring-emerald-200' : 'bg-indigo-600'
+                        }`}
+                      >
+                        {t.id === preferredTeacherId && '★ '}
+                        {t.name}
+                        {!readOnly && (
+                          <button
+                            onClick={() => handleRemoveTeacher(subject.id, t)}
+                            aria-label={`Remove ${t.name} from ${subject.name}`}
+                            className="opacity-70 hover:opacity-100"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </motion.span>
+                    ))}
+                  </AnimatePresence>
                   {!readOnly && (
-                    <button
+                    <motion.button
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.96 }}
                       onClick={() => setOpenDropdownId(openDropdownId === subject.id ? null : subject.id)}
                       className="rounded-full border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
                     >
                       + Add
-                    </button>
+                    </motion.button>
                   )}
-                  {openDropdownId === subject.id && (
-                    <div className="absolute left-0 top-7 z-10 max-h-52 w-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-1 shadow-md">
-                      {availableTeachers.length === 0 && (
-                        <p className="px-2 py-1.5 text-xs text-slate-400">No other teachers</p>
-                      )}
-                      {availableTeachers.map((t) => (
-                        <div
-                          key={t.id}
-                          onClick={() => handleAddTeacher(subject.id, t)}
-                          className="cursor-pointer rounded px-2 py-1.5 text-sm hover:bg-slate-50"
-                        >
-                          {t.name}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <AnimatePresence>
+                    {openDropdownId === subject.id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: -4 }}
+                        transition={{ duration: 0.12, ease: 'easeOut' }}
+                        className="absolute left-0 top-7 z-10 max-h-52 w-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-1 shadow-md"
+                      >
+                        {availableTeachers.length === 0 && (
+                          <p className="px-2 py-1.5 text-xs text-slate-400">No other teachers</p>
+                        )}
+                        {availableTeachers.map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => handleAddTeacher(subject.id, t)}
+                            className="cursor-pointer rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                          >
+                            {t.name}
+                          </div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
                 {requirement && qualifiedTeachers.length > 1 && (
                   <select
@@ -513,7 +611,7 @@ export default function DataEntryTab({ schoolId, classGroupId, institutionType, 
                   </button>
                 )}
               </td>
-            </tr>
+            </motion.tr>
           ))}
           {rows.length === 0 && (
             <tr>
@@ -615,8 +713,20 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      className="fixed inset-0 z-20 flex items-center justify-center bg-black/30 p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.97, y: 6 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: 6 }}
+        transition={{ duration: 0.15, ease: 'easeOut' }}
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+      >
         <h3 className="text-base font-semibold">Add teacher</h3>
         <form onSubmit={handleSubmit} className="mt-3 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
@@ -629,7 +739,7 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Teacher name"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
           </div>
 
@@ -673,13 +783,13 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
             </button>
             <button
               disabled={!name.trim() || submitting}
-              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+              className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
               {submitting ? 'Adding…' : 'Add teacher'}
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
