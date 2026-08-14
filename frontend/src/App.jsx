@@ -11,6 +11,8 @@ import DataEntryTab from './components/DataEntryTab'
 import ConstraintsTab from './components/ConstraintsTab'
 import TimetableTab from './components/TimetableTab'
 import TeamTab from './components/TeamTab'
+import SetupProgressBar from './components/SetupProgressBar'
+import { useSetupProgress } from './hooks/useSetupProgress'
 
 // Substitutions used to be its own tab here, but it's really a sibling
 // view of the generated schedule (same data — entries, periods, teachers
@@ -39,6 +41,12 @@ function App() {
   const [selectedClassGroupId, setSelectedClassGroupId] = useState(null)
   const [teachers, setTeachers] = useState([])
   const [tab, setTab] = useState('overview')
+  // Which of Data Entry's three sub-pages (subjects/teachers/plan) is
+  // active — lifted up here rather than kept local to DataEntryTab so
+  // the header progress bar and OverviewTab's step cards can jump
+  // straight to e.g. "Teachers" instead of just landing on Data Entry
+  // and making the admin find the right sub-page themselves.
+  const [dataEntrySubView, setDataEntrySubView] = useState('subjects')
   const [error, setError] = useState(null)
   // Add-school is a small modal rather than window.prompt() — a native
   // browser dialog looked jarring next to an otherwise fully custom UI,
@@ -173,6 +181,35 @@ function App() {
     }
   }
 
+  async function handleUpdateClassGroup(classGroupId, data) {
+    try {
+      await api.updateClassGroup(classGroupId, data)
+      setError(null)
+      await loadSchoolData(selectedSchoolId)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  // Renames a grade heading for every section under it at once — "grade"
+  // is just a shared string, not its own row, so fixing a shared typo
+  // (or relabeling "Grade 8" to "Grade VIII") shouldn't require editing
+  // each section individually. oldGrade is the sidebar's grouping key,
+  // which is the literal string "Ungrouped" for sections with no grade.
+  async function handleRenameGrade(oldGrade, newGrade) {
+    try {
+      const targets = classGroups.filter((cg) => (cg.grade || 'Ungrouped') === oldGrade)
+      await Promise.all(
+        targets.map((cg) => api.updateClassGroup(cg.id, { grade: newGrade.trim() || null }))
+      )
+      setError(null)
+      await loadSchoolData(selectedSchoolId)
+    } catch (err) {
+      setError(err.message)
+      await loadSchoolData(selectedSchoolId)
+    }
+  }
+
   async function handleDeleteClassGroup(classGroup) {
     const label = classGroup.grade ? `${classGroup.grade} - ${classGroup.name}` : classGroup.name
     if (
@@ -214,6 +251,28 @@ function App() {
     setUser(acceptedUser)
   }
 
+  const selectedSchool = schools.find((s) => s.id === selectedSchoolId)
+  const selectedClassGroup = classGroups.find((c) => c.id === selectedClassGroupId)
+
+  // Single source of truth for "how close is this section to a
+  // generated timetable" — shared by the header's compact bar, the
+  // Constraints/Timetable tabs' muted-until-ready styling below, and
+  // OverviewTab's detailed step cards (see useSetupProgress.js). Called
+  // unconditionally (rules-of-hooks) — before login or without a
+  // selected section, schoolId/classGroupId are null and the hook just
+  // never fires its fetch.
+  const setupProgress = useSetupProgress({
+    schoolId: selectedClassGroup ? selectedSchoolId : null,
+    classGroupId: selectedClassGroupId,
+    classGroupLabel: selectedClassGroup ? `Section ${selectedClassGroup.name}` : null,
+    // Re-fetch whenever the admin switches top-level tabs or Data Entry
+    // sub-pages — App.jsx itself never unmounts, so without this the
+    // header bar would only ever reflect counts from the moment a
+    // section was first selected, never noticing subjects/teachers/
+    // periods added afterward.
+    refreshKey: `${tab}:${dataEntrySubView}`,
+  })
+
   if (inviteToken && !inviteHandled) {
     return <AcceptInvitePage token={inviteToken} onAccepted={handleInviteAccepted} />
   }
@@ -237,10 +296,26 @@ function App() {
     )
   }
 
-  const selectedSchool = schools.find((s) => s.id === selectedSchoolId)
-  const selectedClassGroup = classGroups.find((c) => c.id === selectedClassGroupId)
   const isViewer = selectedSchool?.role === 'viewer'
   const TABS = selectedSchool?.role === 'admin' ? [...BASE_TABS, { id: 'team', label: 'Team' }] : BASE_TABS
+
+  // Jumps to a tab and, for Data Entry, straight to the right sub-page
+  // (subjects/teachers/plan) instead of leaving the admin to find it —
+  // used by both the header progress bar and OverviewTab's step cards.
+  function handleNavigate(tabId, subView) {
+    setTab(tabId)
+    if (subView) setDataEntrySubView(subView)
+  }
+
+  // Data Entry has two distinct modes: school-wide (Subjects/Teachers,
+  // reached via the sidebar's "Subjects & Teachers" item, no section
+  // implied) and section-scoped (a section's plan, reached by clicking
+  // that section in the sidebar). Whichever mode is active determines
+  // whether the sidebar should show a section as selected — showing one
+  // while browsing the whole school's teacher list is exactly the
+  // "why does the sidebar say Section 8-B while I'm looking at every
+  // teacher" confusion this avoids.
+  const inSchoolWideDataEntry = tab === 'entry' && (dataEntrySubView === 'subjects' || dataEntrySubView === 'teachers')
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
@@ -253,24 +328,30 @@ function App() {
           onSelectSchool={setSelectedSchoolId}
           onAddSchool={() => setAddSchoolOpen(true)}
           classGroups={classGroups}
-          selectedClassGroupId={selectedClassGroupId}
-          onSelectClassGroup={setSelectedClassGroupId}
+          selectedClassGroupId={inSchoolWideDataEntry ? null : selectedClassGroupId}
+          onSelectClassGroup={(id) => {
+            setSelectedClassGroupId(id)
+            setDataEntrySubView('plan')
+          }}
           onAddClassGroup={handleAddClassGroup}
           onAddClassGroups={handleAddClassGroups}
           onDeleteClassGroup={handleDeleteClassGroup}
+          onUpdateClassGroup={handleUpdateClassGroup}
+          onRenameGrade={handleRenameGrade}
+          onGoToSchoolSetup={() => {
+            setTab('entry')
+            setDataEntrySubView('subjects')
+          }}
+          schoolSetupActive={inSchoolWideDataEntry}
           readOnly={isViewer}
         />
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-white px-6 py-3">
-          {selectedSchool && selectedClassGroup ? (
+          {selectedSchool ? (
             <div className="mr-4 flex items-center gap-1.5 text-sm">
-              <span className="text-slate-500">{selectedSchool.name}</span>
-              <span className="text-slate-300">›</span>
-              <span className="text-slate-500">{selectedClassGroup.grade || 'Ungrouped'}</span>
-              <span className="text-slate-300">›</span>
-              <span className="font-semibold">Section {selectedClassGroup.name}</span>
+              <span className="font-semibold">{selectedSchool.name}</span>
               {isViewer && (
                 <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                   View only
@@ -278,32 +359,41 @@ function App() {
               )}
             </div>
           ) : (
-            <span className="mr-4 text-sm text-slate-500">
-              {schools.length === 0 ? 'Create a school to get started' : 'Add a grade/section to get started'}
-            </span>
+            <span className="mr-4 text-sm text-slate-500">Create a school to get started</span>
           )}
 
-          {selectedClassGroup && (
-            <nav className="ml-auto flex gap-1 text-sm">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`relative rounded-md px-3 py-1.5 font-medium ${
-                    tab === t.id ? 'text-white' : 'text-slate-500 hover:bg-slate-100'
-                  }`}
-                >
-                  {tab === t.id && (
-                    <motion.span
-                      layoutId="tab-active-pill"
-                      transition={{ type: 'spring', stiffness: 500, damping: 40 }}
-                      className="absolute inset-0 rounded-md bg-indigo-600"
-                    />
-                  )}
-                  <span className="relative z-10">{t.label}</span>
-                </button>
-              ))}
-            </nav>
+          {selectedSchool && (
+            <div className="ml-auto flex items-center gap-3">
+              <SetupProgressBar progress={setupProgress} onNavigate={handleNavigate} />
+              <nav className="flex gap-1 text-sm">
+                {TABS.map((t) => {
+                  // Constraints/Timetable can't do anything useful until
+                  // the basics exist (no subjects/teachers means an empty
+                  // Constraints screen and a Timetable tab that can only
+                  // fail) — muted rather than hidden or disabled, so
+                  // someone who wants to peek still can.
+                  const muted = ['constraints', 'timetable'].includes(t.id) && !setupProgress.allRequiredDone
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setTab(t.id)}
+                      className={`relative rounded-md px-3 py-1.5 font-medium ${
+                        tab === t.id ? 'text-white' : muted ? 'text-slate-300 hover:bg-slate-100 hover:text-slate-500' : 'text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      {tab === t.id && (
+                        <motion.span
+                          layoutId="tab-active-pill"
+                          transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                          className="absolute inset-0 rounded-md bg-indigo-600"
+                        />
+                      )}
+                      <span className="relative z-10">{t.label}</span>
+                    </button>
+                  )
+                })}
+              </nav>
+            </div>
           )}
 
           <button onClick={handleLogout} className="ml-2 text-xs text-slate-400 hover:text-slate-700">
@@ -323,38 +413,49 @@ function App() {
 
           {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-          {selectedSchool && !selectedClassGroup && (
-            isViewer ? (
-              <p className="text-sm text-slate-500">
-                {selectedSchool.name} doesn't have any grades/sections set up yet. An admin needs
-                to add one before there's anything here to view.
-              </p>
-            ) : (
-              <FirstRunWelcome
-                schoolName={selectedSchool.name}
-                institutionType={selectedSchool.institution_type}
-                onAddClassGroup={handleAddClassGroup}
-                onAddClassGroups={handleAddClassGroups}
-              />
-            )
-          )}
-
-          {selectedSchool && selectedClassGroup && (
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={tab}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.15, ease: 'easeOut' }}
-              >
+          {selectedSchool && (
+            // No exit animation (and no AnimatePresence) here on purpose:
+            // an in-flight async update on the outgoing tab (e.g. Data
+            // Entry's periods/week field saving right as you switch tabs)
+            // can re-render it mid-exit, which can prevent Framer
+            // Motion's exit-complete callback from ever firing — leaving
+            // a zero-opacity but still-laid-out copy of the old tab stuck
+            // in the DOM forever, pushing the new content down. Plain
+            // key-based remounting has no exit phase to get stuck in, so
+            // this can't happen; the enter animation below still plays.
+            <motion.div
+              key={tab}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+            >
+                {/* Overview is the one tab that still needs a section to
+                    do anything (it tracks one section's progress toward a
+                    generated timetable), so a school with none yet sees
+                    the "add your first section" flow here instead of it
+                    blocking every other tab — Subjects/Teachers and even
+                    Constraints are school-wide and don't need one. */}
                 {tab === 'overview' && (
-                  <OverviewTab
-                    schoolId={selectedSchoolId}
-                    classGroupId={selectedClassGroupId}
-                    classGroup={selectedClassGroup}
-                    onNavigate={setTab}
-                  />
+                  selectedClassGroup ? (
+                    <OverviewTab
+                      schoolId={selectedSchoolId}
+                      classGroupId={selectedClassGroupId}
+                      classGroup={selectedClassGroup}
+                      onNavigate={handleNavigate}
+                    />
+                  ) : isViewer ? (
+                    <p className="text-sm text-slate-500">
+                      {selectedSchool.name} doesn't have any grades/sections set up yet. An admin
+                      needs to add one before there's anything here to view.
+                    </p>
+                  ) : (
+                    <FirstRunWelcome
+                      schoolName={selectedSchool.name}
+                      institutionType={selectedSchool.institution_type}
+                      onAddClassGroup={handleAddClassGroup}
+                      onAddClassGroups={handleAddClassGroups}
+                    />
+                  )
                 )}
                 {tab === 'entry' && (
                   <DataEntryTab
@@ -363,23 +464,31 @@ function App() {
                     institutionType={selectedSchool?.institution_type}
                     onClassGroupsChanged={() => loadSchoolData(selectedSchoolId)}
                     readOnly={isViewer}
+                    subView={dataEntrySubView}
+                    onSubViewChange={setDataEntrySubView}
                   />
                 )}
                 {tab === 'constraints' && <ConstraintsTab schoolId={selectedSchoolId} readOnly={isViewer} />}
                 {tab === 'timetable' && (
-                  <TimetableTab
-                    schoolId={selectedSchoolId}
-                    classGroup={selectedClassGroup}
-                    classGroups={classGroups}
-                    teachers={teachers}
-                    readOnly={isViewer}
-                  />
+                  selectedClassGroup ? (
+                    <TimetableTab
+                      schoolId={selectedSchoolId}
+                      classGroup={selectedClassGroup}
+                      classGroups={classGroups}
+                      teachers={teachers}
+                      readOnly={isViewer}
+                    />
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      No grades/sections yet — the timetable is generated per section, so add one
+                      from the sidebar first.
+                    </p>
+                  )
                 )}
                 {tab === 'team' && selectedSchool?.role === 'admin' && (
                   <TeamTab schoolId={selectedSchoolId} />
                 )}
-              </motion.div>
-            </AnimatePresence>
+            </motion.div>
           )}
         </div>
       </div>

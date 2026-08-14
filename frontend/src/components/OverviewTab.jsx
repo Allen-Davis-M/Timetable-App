@@ -1,115 +1,29 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { useState } from 'react'
+import { useSetupProgress } from '../hooks/useSetupProgress'
 
 /**
- * Landing tab for a selected section: an onboarding checklist that walks a
- * new admin through the real order of operations (periods -> subjects &
- * teachers -> this section's requirements -> constraints (optional) ->
- * generate), not just a static 3-card summary. Each step shows done/not
- * done based on real counts, and the first incomplete *required* step
- * (constraints is the only optional one) is highlighted so there's always
- * one obvious next action instead of five equally-weighted cards.
+ * Landing tab for a selected section: walks a new admin through the real
+ * order of operations (periods -> subjects -> teachers -> this section's
+ * plan -> constraints (optional) -> generate) one step at a time rather
+ * than as six equally-weighted cards. Only the current step is shown by
+ * default (progress bar + one big card, one obvious button); the full
+ * list is available behind "Show all steps" for anyone who wants the
+ * overview, but isn't the default view.
  *
- * This exists because periods and subjects/teachers/class-requirements are
- * silent prerequisites for generation with no guidance anywhere else in
- * the app: DataEntryTab collapses the periods setup behind a toggle (see
- * its own docstring), and a school with none of this filled in just gets
- * a raw "No qualified teacher found..." or "no periods defined" error the
- * first time it tries to generate. Surfacing the checklist here means a
- * new admin sees the full path before they hit those errors, not after.
+ * Step data comes from useSetupProgress, shared with the header's
+ * compact progress bar (App.jsx) and SetupProgressBar.jsx — so this
+ * detailed view and the always-visible header summary can't disagree
+ * about what's left.
  */
 export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavigate }) {
-  const [periodCount, setPeriodCount] = useState(0)
-  const [subjectCount, setSubjectCount] = useState(0)
-  const [teacherCount, setTeacherCount] = useState(0)
-  const [requirementCount, setRequirementCount] = useState(0)
-  const [constraintCount, setConstraintCount] = useState(0)
-  const [hasTimetable, setHasTimetable] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  // If these calls fail, the checklist would otherwise render every step
-  // as "0 configured / not done" — indistinguishable from a genuinely
-  // empty new school, and could tell an admin to "set up periods" they
-  // actually already have. Track the failure explicitly instead of
-  // swallowing it, so the checklist can say "couldn't load" rather than
-  // confidently lying about the school's real state.
-  const [loadError, setLoadError] = useState(null)
+  const [showAll, setShowAll] = useState(false)
 
-  useEffect(() => {
-    setLoaded(false)
-    setLoadError(null)
-    async function load() {
-      try {
-        const [periods, subjects, teachers, requirements, constraints, timetables] = await Promise.all([
-          api.listPeriods(schoolId),
-          api.listSubjects(schoolId),
-          api.listTeachers(schoolId),
-          api.listRequirements(classGroupId),
-          api.listConstraints(schoolId),
-          api.listTimetables(schoolId),
-        ])
-        setPeriodCount(periods.length)
-        setSubjectCount(subjects.length)
-        setTeacherCount(teachers.length)
-        setRequirementCount(requirements.length)
-        setConstraintCount(constraints.length)
-        setHasTimetable(timetables.length > 0)
-      } catch (err) {
-        setLoadError(err.message)
-      } finally {
-        setLoaded(true)
-      }
-    }
-    load()
-  }, [schoolId, classGroupId])
-
-  const steps = [
-    {
-      key: 'periods',
-      title: 'Set up periods',
-      body: periodCount > 0 ? `${periodCount} periods defined` : 'No periods yet — every school needs its weekly period grid before anything else',
-      done: periodCount > 0,
-      optional: false,
-      target: 'entry',
-    },
-    {
-      key: 'subjects',
-      title: 'Add subjects & teachers',
-      body: `${subjectCount} subjects · ${teacherCount} teachers`,
-      done: subjectCount > 0 && teacherCount > 0,
-      optional: false,
-      target: 'entry',
-    },
-    {
-      key: 'requirements',
-      title: `This section's requirements`,
-      body: requirementCount > 0 ? `${requirementCount} subjects assigned periods/week` : `Section ${classGroup.name} doesn't need any subjects yet`,
-      done: requirementCount > 0,
-      optional: false,
-      target: 'entry',
-    },
-    {
-      key: 'constraints',
-      title: 'Constraints',
-      body: constraintCount > 0 ? `${constraintCount} rules described in plain English` : 'Optional — skip if this section has no special rules',
-      done: constraintCount > 0,
-      optional: true,
-      target: 'constraints',
-    },
-    {
-      key: 'generate',
-      title: 'Generate',
-      body: hasTimetable ? 'Timetable generated' : 'Not generated yet',
-      done: hasTimetable,
-      optional: false,
-      target: 'timetable',
-    },
-  ]
-
-  // The first step that's both required and not done — this is the one
-  // thing to highlight as "do this next". Once every required step is
-  // done, nothing is current (the checklist just shows all-green).
-  const currentKey = steps.find((s) => !s.optional && !s.done)?.key
-  const allRequiredDone = steps.every((s) => s.optional || s.done)
+  const { steps, requiredSteps, doneRequiredCount, currentStep, allRequiredDone, loaded, loadError } =
+    useSetupProgress({
+      schoolId,
+      classGroupId,
+      classGroupLabel: classGroup ? `Section ${classGroup.name}` : null,
+    })
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -120,33 +34,95 @@ export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavi
         <p className="mt-1.5 text-sm text-slate-500">
           {allRequiredDone
             ? 'Everything needed to generate a timetable is set up for this section.'
-            : 'Follow these steps in order — each one unlocks the next.'}
+            : "Let's get this section ready, one step at a time."}
         </p>
       </div>
 
       {loadError && (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          Couldn't load this section's status ({loadError}) — the checklist below may not reflect
+          Couldn't load this section's status ({loadError}) — what's shown below may not reflect
           what's actually set up. Try switching sections and back, or check your connection.
         </p>
       )}
 
-      <div className="flex flex-col gap-2.5">
-        {steps.map((step, i) => (
-          <StepRow
-            key={step.key}
-            index={i + 1}
-            step={step}
-            current={loaded && step.key === currentKey}
-            onClick={() => onNavigate(step.target)}
-          />
-        ))}
-      </div>
+      {!allRequiredDone && (
+        <div className="flex items-center gap-3">
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-indigo-600 transition-all"
+              style={{ width: `${(doneRequiredCount / requiredSteps.length) * 100}%` }}
+            />
+          </div>
+          <span className="flex-none text-xs font-medium text-slate-500">
+            {doneRequiredCount} of {requiredSteps.length} done
+          </span>
+        </div>
+      )}
+
+      {loaded && currentStep && !showAll && (
+        <StepRow step={currentStep} current onClick={() => onNavigate(currentStep.tab, currentStep.subView)} big />
+      )}
+
+      {allRequiredDone && !showAll && (
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-5">
+          <p className="text-sm font-medium text-emerald-800">
+            This section is ready — the timetable can be generated.
+          </p>
+          <button
+            onClick={() => onNavigate('timetable')}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            {steps.find((s) => s.key === 'generate')?.done ? 'Review timetable' : 'Build the timetable'}
+          </button>
+        </div>
+      )}
+
+      {showAll && (
+        <div className="flex flex-col gap-2.5">
+          {steps.map((step, i) => (
+            <StepRow
+              key={step.key}
+              index={i + 1}
+              step={step}
+              current={loaded && step.key === currentStep?.key}
+              onClick={() => onNavigate(step.tab, step.subView)}
+            />
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowAll((v) => !v)}
+        className="w-fit text-xs font-medium text-slate-400 hover:text-slate-600 hover:underline"
+      >
+        {showAll ? 'Show just the next step' : 'Show all steps'}
+      </button>
     </div>
   )
 }
 
-function StepRow({ index, step, current, onClick }) {
+function StepRow({ index, step, current, onClick, big }) {
+  if (big) {
+    return (
+      <div className="flex flex-col items-start gap-3 rounded-lg border border-indigo-600 bg-indigo-50/60 p-5">
+        <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+          Do this next
+        </span>
+        <div>
+          <p className="text-base font-medium">{step.title}</p>
+          <p className="mt-1 text-sm text-slate-500">{step.body}</p>
+        </div>
+        <button
+          onClick={onClick}
+          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+        >
+          Continue
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div
       className={`flex items-center gap-4 rounded-lg border p-4 ${

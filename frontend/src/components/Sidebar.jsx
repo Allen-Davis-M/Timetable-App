@@ -31,6 +31,10 @@ export default function Sidebar({
   onAddClassGroup,
   onAddClassGroups,
   onDeleteClassGroup,
+  onUpdateClassGroup,
+  onRenameGrade,
+  onGoToSchoolSetup,
+  schoolSetupActive = false,
   readOnly = false,
 }) {
   const [expanded, setExpanded] = useState({})
@@ -39,6 +43,14 @@ export default function Sidebar({
   const [newGrade, setNewGrade] = useState('')
   const [newSection, setNewSection] = useState('')
   const [submittingSection, setSubmittingSection] = useState(false)
+  // Which grade heading is currently being renamed (grade key, or null).
+  const [editingGrade, setEditingGrade] = useState(null)
+  // Which section is currently being edited (class group id, or null) —
+  // edit mode swaps the row for a small grade+name form instead of a
+  // single text field, since fixing a typo and moving a section to a
+  // different grade are the same "correct this section" action to an
+  // admin, not two separate features.
+  const [editingSectionId, setEditingSectionId] = useState(null)
 
   const grades = useMemo(() => {
     const map = new Map()
@@ -93,6 +105,24 @@ export default function Sidebar({
           <div className="text-xs text-slate-500">Admin</div>
         </div>
       </div>
+
+      <div className="h-px bg-slate-200" />
+
+      {onGoToSchoolSetup && (
+        <button
+          onClick={onGoToSchoolSetup}
+          className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium ${
+            schoolSetupActive ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+          title="Subjects and teachers for the whole school — not tied to any one section"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none opacity-70">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+          Subjects &amp; Teachers
+        </button>
+      )}
 
       <div className="h-px bg-slate-200" />
 
@@ -186,28 +216,54 @@ export default function Sidebar({
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.2, delay: Math.min(i, 8) * 0.03, ease: 'easeOut' }}
           >
-            <div
-              onClick={() => toggle(grade)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  toggle(grade)
-                }
-              }}
-              className="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm hover:bg-slate-50"
-            >
-              <span
-                className="inline-flex opacity-60 transition-transform"
-                style={{ transform: expanded[grade] ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            {editingGrade === grade ? (
+              <GradeRenameForm
+                initialValue={grade}
+                onCancel={() => setEditingGrade(null)}
+                onSave={async (newValue) => {
+                  if (newValue.trim() && newValue.trim() !== grade) {
+                    await onRenameGrade(grade, newValue.trim())
+                  }
+                  setEditingGrade(null)
+                }}
+              />
+            ) : (
+              <div
+                onClick={() => toggle(grade)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    toggle(grade)
+                  }
+                }}
+                className="group flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm hover:bg-slate-50"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </span>
-              <span>{grade}</span>
-            </div>
+                <span
+                  className="inline-flex opacity-60 transition-transform"
+                  style={{ transform: expanded[grade] ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </span>
+                <span className="flex-1">{grade}</span>
+                {!readOnly && onRenameGrade && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setEditingGrade(grade)
+                    }}
+                    title={`Rename "${grade}" (applies to all its sections)`}
+                    aria-label={`Rename ${grade}`}
+                    className="opacity-0 text-slate-300 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
+                  >
+                    ✎
+                  </button>
+                )}
+              </div>
+            )}
             <AnimatePresence initial={false}>
               {expanded[grade] !== false && (
                 <motion.div
@@ -220,6 +276,20 @@ export default function Sidebar({
                 <div className="mb-0.5 flex flex-col gap-px pl-6">
                   {sections.map((cg) => {
                     const selected = cg.id === selectedClassGroupId
+                    if (editingSectionId === cg.id) {
+                      return (
+                        <SectionEditForm
+                          key={cg.id}
+                          classGroup={cg}
+                          allGrades={grades.map(([g]) => g)}
+                          onCancel={() => setEditingSectionId(null)}
+                          onSave={async (data) => {
+                            await onUpdateClassGroup(cg.id, data)
+                            setEditingSectionId(null)
+                          }}
+                        />
+                      )
+                    }
                     return (
                       <motion.div
                         key={cg.id}
@@ -248,18 +318,35 @@ export default function Sidebar({
                         <span className={`relative z-10 ${selected ? 'font-medium text-indigo-900' : 'text-slate-600'}`}>
                           Section {cg.name}
                         </span>
-                        {!readOnly && onDeleteClassGroup && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onDeleteClassGroup(cg)
-                            }}
-                            title={`Delete Section ${cg.name}`}
-                            aria-label={`Delete Section ${cg.name}`}
-                            className="relative z-10 opacity-0 text-slate-300 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
-                          >
-                            ✕
-                          </button>
+                        {!readOnly && (
+                          <span className="relative z-10 flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+                            {onUpdateClassGroup && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditingSectionId(cg.id)
+                                }}
+                                title={`Edit Section ${cg.name}`}
+                                aria-label={`Edit Section ${cg.name}`}
+                                className="text-slate-300 hover:text-indigo-600 focus:opacity-100"
+                              >
+                                ✎
+                              </button>
+                            )}
+                            {onDeleteClassGroup && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onDeleteClassGroup(cg)
+                                }}
+                                title={`Delete Section ${cg.name}`}
+                                aria-label={`Delete Section ${cg.name}`}
+                                className="text-slate-300 hover:text-red-600 focus:opacity-100"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
                         )}
                       </motion.div>
                     )
@@ -285,5 +372,128 @@ export default function Sidebar({
         + Add another school
       </button>
     </aside>
+  )
+}
+
+/**
+ * Inline rename for a grade heading. Since "grade" is just a shared
+ * string across every section under it, saving renames all of them in
+ * one action (see App.jsx's handleRenameGrade) rather than requiring an
+ * admin to fix a shared typo section-by-section.
+ */
+function GradeRenameForm({ initialValue, onSave, onCancel }) {
+  const [value, setValue] = useState(initialValue)
+  const [saving, setSaving] = useState(false)
+
+  async function handleSave() {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(value)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1 px-1.5 py-1">
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSave()
+          if (e.key === 'Escape') onCancel()
+        }}
+        onFocus={(e) => e.target.select()}
+        className="min-w-0 flex-1 rounded border border-indigo-400 px-1.5 py-0.5 text-sm focus:outline-none"
+      />
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        title="Save"
+        className="text-slate-400 hover:text-indigo-600 disabled:opacity-50"
+      >
+        ✓
+      </button>
+      <button onClick={onCancel} disabled={saving} title="Cancel" className="text-slate-400 hover:text-slate-700 disabled:opacity-50">
+        ✕
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Inline edit for one section: name and grade together, since "fix a
+ * typo" and "this section is actually in the wrong grade" are the same
+ * "correct this section" action from an admin's point of view, not two
+ * separate features. A datalist offers existing grades so moving a
+ * section to an already-existing grade doesn't require retyping it
+ * exactly (which would otherwise silently create a new, near-duplicate
+ * grade heading).
+ */
+function SectionEditForm({ classGroup, allGrades, onSave, onCancel }) {
+  const [grade, setGrade] = useState(classGroup.grade || '')
+  const [name, setName] = useState(classGroup.name)
+  const [saving, setSaving] = useState(false)
+  const listId = `grade-options-${classGroup.id}`
+
+  async function handleSave() {
+    if (!name.trim() || saving) return
+    setSaving(true)
+    try {
+      await onSave({ grade: grade.trim() || null, name: name.trim() })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1 rounded bg-indigo-50/60 px-2 py-1.5">
+      <label htmlFor={`edit-grade-${classGroup.id}`} className="sr-only">Grade</label>
+      <input
+        id={`edit-grade-${classGroup.id}`}
+        list={listId}
+        value={grade}
+        disabled={saving}
+        onChange={(e) => setGrade(e.target.value)}
+        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        placeholder="Grade"
+        className="rounded border border-slate-300 px-1.5 py-0.5 text-xs focus:border-indigo-500 focus:outline-none"
+      />
+      <datalist id={listId}>
+        {allGrades.map((g) => (
+          <option key={g} value={g === 'Ungrouped' ? '' : g} />
+        ))}
+      </datalist>
+      <label htmlFor={`edit-name-${classGroup.id}`} className="sr-only">Section name</label>
+      <input
+        id={`edit-name-${classGroup.id}`}
+        autoFocus
+        value={name}
+        disabled={saving}
+        onChange={(e) => setName(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSave()
+          if (e.key === 'Escape') onCancel()
+        }}
+        placeholder="Section name"
+        className="rounded border border-slate-300 px-1.5 py-0.5 text-xs focus:border-indigo-500 focus:outline-none"
+      />
+      <div className="flex justify-end gap-2 pt-0.5">
+        <button onClick={onCancel} disabled={saving} className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-50">
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving || !name.trim()}
+          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
   )
 }

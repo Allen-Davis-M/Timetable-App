@@ -148,6 +148,7 @@ export const api = {
   // Class groups (sections, grouped by `grade` for the sidebar tree)
   listClassGroups: (schoolId) => get(`/class-groups?school_id=${schoolId}`),
   createClassGroup: (data) => post("/class-groups", data),
+  updateClassGroup: (id, data) => put(`/class-groups/${id}`, data),
   deleteClassGroup: (id) => del(`/class-groups/${id}`),
 
   // Subject requirements (nested under class groups)

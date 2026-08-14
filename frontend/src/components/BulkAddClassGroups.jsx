@@ -1,36 +1,75 @@
 import { useMemo, useState } from 'react'
 
+const COMMON_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F']
+const GRADE_NUMBERS = Array.from({ length: 12 }, (_, i) => i + 1)
+
 /**
- * Range-based alternative to adding one grade/section at a time. Takes a
- * prefix ("Grade", "Semester", or blank) with a numeric from/to range, and
- * a section list (either a letter range like "A-D" or a comma-separated
- * list like "A, B, C" for schools with non-sequential section names), and
- * creates the full cross-product in one submit — e.g. "Grade 1-12" x
- * "A-C" creates 36 sections in one go instead of 36 separate form
- * submissions.
+ * Range-based alternative to adding one grade/section at a time. Defaults
+ * to a simple, click-only UI (from/to dropdowns + section chips) that
+ * covers the common case with zero typing; "More options" reveals the
+ * original free-text form (custom prefix, non-sequential section names via
+ * comma list, letter ranges like "A-D") for schools that don't fit the
+ * common pattern.
  *
  * Shared between FirstRunWelcome.jsx (a brand-new school with nothing
- * yet) and Sidebar.jsx (adding more later) rather than duplicated, so the
- * parsing/expansion logic and preview behavior can't drift between the
- * two. `existing` (only meaningful in the Sidebar case) is used to skip
- * combinations that already exist rather than creating duplicates or
- * erroring on a unique-constraint conflict the admin didn't ask for.
+ * yet, where this is now the default/primary path since most schools
+ * have several grades at once) and Sidebar.jsx (adding more later)
+ * rather than duplicated, so the parsing/expansion logic and preview
+ * behavior can't drift between the two. `existing` (only meaningful in
+ * the Sidebar case) is used to skip combinations that already exist
+ * rather than creating duplicates or erroring on a unique-constraint
+ * conflict the admin didn't ask for.
  */
 export default function BulkAddClassGroups({ onAddClassGroups, existing = [], onDone, institutionType }) {
-  const [prefix, setPrefix] = useState(institutionType === 'college' ? 'Semester' : 'Grade')
-  const [from, setFrom] = useState('1')
-  const [to, setTo] = useState('12')
-  const [sections, setSections] = useState('A')
+  const defaultPrefix = institutionType === 'college' ? 'Semester' : 'Grade'
+  const [advanced, setAdvanced] = useState(false)
+
+  // Simple mode state
+  const [from, setFrom] = useState(1)
+  const [to, setTo] = useState(10)
+  const [selectedSections, setSelectedSections] = useState(() => new Set(['A', 'B', 'C']))
+  const [customSection, setCustomSection] = useState('')
+
+  // Advanced mode state (original free-text form)
+  const [prefix, setPrefix] = useState(defaultPrefix)
+  const [advFrom, setAdvFrom] = useState('1')
+  const [advTo, setAdvTo] = useState('12')
+  const [advSections, setAdvSections] = useState('A')
+
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  const pairs = useMemo(() => buildPairs(prefix, from, to, sections), [prefix, from, to, sections])
+  const simpleSectionsText = [...selectedSections].sort().join(', ')
+
+  const pairs = useMemo(
+    () =>
+      advanced
+        ? buildPairs(prefix, advFrom, advTo, advSections)
+        : buildPairs(defaultPrefix, String(from), String(to), simpleSectionsText),
+    [advanced, prefix, advFrom, advTo, advSections, defaultPrefix, from, to, simpleSectionsText]
+  )
   const existingKeys = useMemo(
     () => new Set(existing.map((cg) => `${cg.grade || ''}::${cg.name}`)),
     [existing]
   )
   const newPairs = pairs.filter((p) => !existingKeys.has(`${p.grade}::${p.name}`))
   const skippedCount = pairs.length - newPairs.length
+
+  function toggleSection(letter) {
+    setSelectedSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(letter)) next.delete(letter)
+      else next.add(letter)
+      return next
+    })
+  }
+
+  function addCustomSection() {
+    const value = customSection.trim().toUpperCase()
+    if (!value) return
+    setSelectedSections((prev) => new Set(prev).add(value))
+    setCustomSection('')
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -47,52 +86,151 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
     }
   }
 
+  const numberLabel = institutionType === 'college' ? 'semester' : 'grade'
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">Prefix (optional)</label>
-          <input
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-            placeholder="Grade, Semester, ..."
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">Sections</label>
-          <input
-            value={sections}
-            onChange={(e) => setSections(e.target.value)}
-            placeholder="A-D, or A, B, C"
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">From</label>
-          <input
-            type="number"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-500">To</label>
-          <input
-            type="number"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
-      </div>
+      {!advanced ? (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">From {numberLabel}</label>
+              <select
+                value={from}
+                onChange={(e) => setFrom(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              >
+                {GRADE_NUMBERS.map((n) => (
+                  <option key={n} value={n}>
+                    {defaultPrefix} {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">To {numberLabel}</label>
+              <select
+                value={to}
+                onChange={(e) => setTo(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              >
+                {GRADE_NUMBERS.map((n) => (
+                  <option key={n} value={n}>
+                    {defaultPrefix} {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">Sections in each {numberLabel}</label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {COMMON_SECTIONS.map((letter) => (
+                <button
+                  key={letter}
+                  type="button"
+                  onClick={() => toggleSection(letter)}
+                  className={`h-8 w-8 rounded-md text-sm font-medium ${
+                    selectedSections.has(letter)
+                      ? 'bg-indigo-600 text-white'
+                      : 'border border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {letter}
+                </button>
+              ))}
+              {[...selectedSections]
+                .filter((s) => !COMMON_SECTIONS.includes(s))
+                .map((letter) => (
+                  <button
+                    key={letter}
+                    type="button"
+                    onClick={() => toggleSection(letter)}
+                    className="h-8 rounded-md bg-indigo-600 px-2.5 text-sm font-medium text-white"
+                  >
+                    {letter} ×
+                  </button>
+                ))}
+              <input
+                value={customSection}
+                onChange={(e) => setCustomSection(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addCustomSection()
+                  }
+                }}
+                placeholder="Other"
+                className="h-8 w-16 rounded-md border border-slate-300 px-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setAdvanced(true)}
+            className="w-fit text-xs font-medium text-indigo-600 hover:underline"
+          >
+            My grades don't follow a pattern
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">Prefix (optional)</label>
+              <input
+                value={prefix}
+                onChange={(e) => setPrefix(e.target.value)}
+                placeholder="Grade, Semester, ..."
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">Sections</label>
+              <input
+                value={advSections}
+                onChange={(e) => setAdvSections(e.target.value)}
+                placeholder="A-D, or A, B, C"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">From</label>
+              <input
+                type="number"
+                value={advFrom}
+                onChange={(e) => setAdvFrom(e.target.value)}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-500">To</label>
+              <input
+                type="number"
+                value={advTo}
+                onChange={(e) => setAdvTo(e.target.value)}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setAdvanced(false)}
+            className="w-fit text-xs font-medium text-indigo-600 hover:underline"
+          >
+            Back to simple setup
+          </button>
+        </>
+      )}
 
       <p className="text-xs text-slate-500">
         {pairs.length === 0
-          ? 'Enter a valid range and section list to see a preview.'
+          ? 'Choose a range and at least one section to see a preview.'
           : newPairs.length === 0
           ? 'All of these already exist — nothing new to add.'
           : `This creates ${newPairs.length} section${newPairs.length === 1 ? '' : 's'}` +
