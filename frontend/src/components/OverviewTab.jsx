@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useSetupProgress } from '../hooks/useSetupProgress'
 
 /**
  * Landing tab for a selected section: walks a new admin through the real
@@ -10,20 +9,21 @@ import { useSetupProgress } from '../hooks/useSetupProgress'
  * list is available behind "Show all steps" for anyone who wants the
  * overview, but isn't the default view.
  *
- * Step data comes from useSetupProgress, shared with the header's
- * compact progress bar (App.jsx) and SetupProgressBar.jsx — so this
- * detailed view and the always-visible header summary can't disagree
- * about what's left.
+ * Step data comes in as `progress`, App.jsx's single `useSetupProgress()`
+ * call — not a second call of the hook here. This used to call the hook
+ * independently with its own params, which meant it ran an entirely
+ * separate set of fetches from the header's progress bar (App.jsx) on
+ * every visit to this tab — twice the requests for the same data, and it
+ * silently broke once useSetupProgress started expecting
+ * periods/subjects/teachers/requirementsCache to be handed in rather than
+ * fetched itself, since this second call site never passed them. Sharing
+ * App.jsx's single instance fixes both: one fetch instead of two, and one
+ * hook call site to keep in sync instead of two.
  */
-export default function OverviewTab({ schoolId, classGroupId, classGroup, onNavigate }) {
+export default function OverviewTab({ classGroup, onNavigate, progress }) {
   const [showAll, setShowAll] = useState(false)
 
-  const { steps, requiredSteps, doneRequiredCount, currentStep, allRequiredDone, loaded, loadError } =
-    useSetupProgress({
-      schoolId,
-      classGroupId,
-      classGroupLabel: classGroup ? `Section ${classGroup.name}` : null,
-    })
+  const { steps, requiredSteps, doneRequiredCount, currentStep, allRequiredDone, loaded, loadError } = progress
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">

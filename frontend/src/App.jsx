@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api, getToken, setToken } from './api'
 import LandingPage from './components/LandingPage'
@@ -40,6 +40,44 @@ function App() {
   const [classGroups, setClassGroups] = useState([])
   const [selectedClassGroupId, setSelectedClassGroupId] = useState(null)
   const [teachers, setTeachers] = useState([])
+  // Subjects/periods/rooms — lifted up here (alongside classGroups/
+  // teachers, which already lived here) rather than kept local to
+  // DataEntryTab, because DataEntryTab gets unmounted every time the
+  // admin switches to another top-level tab (`{tab === 'entry' && (...)}`
+  // in the render below) — any state kept inside it is destroyed on
+  // every tab switch and has to be re-fetched from scratch on the way
+  // back, which is exactly why switching to Constraints and back used to
+  // cost a fresh multi-request reload of data that was on screen seconds
+  // earlier. App.jsx never unmounts, so state kept here survives tab
+  // switches for free.
+  const [subjects, setSubjects] = useState([])
+  const [periods, setPeriods] = useState([])
+  const [rooms, setRooms] = useState([])
+  // Per-section cache of Data Entry's "requirements" (periods/week per
+  // subject), `{ [classGroupId]: requirement[] }` — same reasoning as
+  // subjects/periods/rooms above: kept here instead of inside
+  // DataEntryTab so a section's plan, once fetched, survives switching
+  // away to another tab and back instead of being thrown away and
+  // re-fetched (which is what was still showing "0s for a few seconds"
+  // even after subjects/teachers/periods/rooms were lifted up, since
+  // this cache hadn't been). Deliberately not eagerly fetched for every
+  // section up front — a school can have dozens of sections, and most
+  // won't be visited in a given sitting — it fills in lazily as
+  // DataEntryTab visits each section.
+  const [requirementsCache, setRequirementsCache] = useState({})
+  // The generated timetable, and whether a generation is in progress —
+  // same reasoning as everything above: TimetableTab gets unmounted on
+  // every tab switch, so state (and an in-flight fetch meant to recover
+  // it) kept only inside it is unreliable — a slow/flaky request on the
+  // way back could still show "no timetable" even though a fetch was
+  // attempted. Owning it here means it's fetched once and simply exists
+  // from then on, regardless of how many times TimetableTab mounts and
+  // unmounts. Polling for an in-progress generation is also owned here so
+  // it keeps running even while the admin is on a different tab, instead
+  // of only resuming once they happen to come back to Timetable.
+  const [timetable, setTimetable] = useState(null)
+  const [generating, setGenerating] = useState(false)
+  const timetablePollRef = useRef(null)
   const [tab, setTab] = useState('overview')
   // Which of Data Entry's three sub-pages (subjects/teachers/plan) is
   // active — lifted up here rather than kept local to DataEntryTab so
@@ -47,6 +85,17 @@ function App() {
   // straight to e.g. "Teachers" instead of just landing on Data Entry
   // and making the admin find the right sub-page themselves.
   const [dataEntrySubView, setDataEntrySubView] = useState('subjects')
+  // Whether loadSchools()/loadSchoolData() have resolved at least once
+  // for the current user/school — distinct from schools.length === 0 /
+  // classGroups.length === 0, which is also true *while the fetch is
+  // still in flight* right after login. Without this, the "Create your
+  // school" prompt and FirstRunWelcome (both genuine "you truly have
+  // none of these yet" screens) briefly flash on every sign-in, since
+  // their trigger condition is indistinguishable from "still loading"
+  // by array length alone. Gate rendering on these instead of on the
+  // arrays themselves, and show a spinner for that brief window.
+  const [schoolsReady, setSchoolsReady] = useState(false)
+  const [schoolDataReady, setSchoolDataReady] = useState(false)
   const [error, setError] = useState(null)
   // Add-school is a small modal rather than window.prompt() — a native
   // browser dialog looked jarring next to an otherwise fully custom UI,
@@ -96,6 +145,7 @@ function App() {
 
   useEffect(() => {
     if (!selectedSchoolId) return
+    setSchoolDataReady(false)
     loadSchoolData(selectedSchoolId)
   }, [selectedSchoolId])
 
@@ -107,24 +157,68 @@ function App() {
       if (list.length > 0) setSelectedSchoolId((prev) => prev ?? list[0].id)
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSchoolsReady(true)
     }
   }
 
   async function loadSchoolData(schoolId) {
     try {
-      const [cg, t] = await Promise.all([
+      const [cg, t, s, p, rm, tts] = await Promise.all([
         api.listClassGroups(schoolId),
         api.listTeachers(schoolId),
+        api.listSubjects(schoolId),
+        api.listPeriods(schoolId),
+        api.listRooms(schoolId),
+        api.listTimetables(schoolId),
       ])
       setClassGroups(cg)
       setTeachers(t)
+      setSubjects(s)
+      setPeriods(p)
+      setRooms(rm)
+      // No `created_at` on TimetableOut — ids are assigned in creation
+      // order, so the highest id is the most recently generated one.
+      const latestTimetable = tts.length > 0 ? tts.reduce((a, b) => (b.id > a.id ? b : a)) : null
+      setTimetable(latestTimetable)
+      if (latestTimetable?.status === 'generating') {
+        setGenerating(true)
+        pollTimetableUntilDone(latestTimetable.id)
+      }
       setError(null)
       setSelectedClassGroupId((prev) =>
         cg.some((c) => c.id === prev) ? prev : cg[0]?.id ?? null
       )
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSchoolDataReady(true)
     }
+  }
+
+  function stopTimetablePolling() {
+    if (timetablePollRef.current) {
+      clearInterval(timetablePollRef.current)
+      timetablePollRef.current = null
+    }
+  }
+
+  function pollTimetableUntilDone(timetableId) {
+    stopTimetablePolling()
+    timetablePollRef.current = setInterval(async () => {
+      try {
+        const updated = await api.getTimetable(timetableId)
+        setTimetable(updated)
+        if (updated.status !== 'generating') {
+          stopTimetablePolling()
+          setGenerating(false)
+        }
+      } catch (err) {
+        stopTimetablePolling()
+        setGenerating(false)
+        setError(err.message)
+      }
+    }, 1500)
   }
 
   async function submitAddSchool(e) {
@@ -233,13 +327,23 @@ function App() {
   }
 
   function handleLogout() {
+    stopTimetablePolling()
     setToken(null)
     setUser(null)
     setSchools([])
     setSelectedSchoolId(null)
     setClassGroups([])
     setSelectedClassGroupId(null)
+    setTeachers([])
+    setSubjects([])
+    setPeriods([])
+    setRooms([])
+    setRequirementsCache({})
+    setTimetable(null)
+    setGenerating(false)
     setShowAuth(false)
+    setSchoolsReady(false)
+    setSchoolDataReady(false)
   }
 
   function handleInviteAccepted(acceptedUser) {
@@ -265,12 +369,21 @@ function App() {
     schoolId: selectedClassGroup ? selectedSchoolId : null,
     classGroupId: selectedClassGroupId,
     classGroupLabel: selectedClassGroup ? `Section ${selectedClassGroup.name}` : null,
-    // Re-fetch whenever the admin switches top-level tabs or Data Entry
+    // Re-fetch (constraints/timetables only — see useSetupProgress.js)
+    // whenever the admin switches top-level tabs or Data Entry
     // sub-pages — App.jsx itself never unmounts, so without this the
     // header bar would only ever reflect counts from the moment a
-    // section was first selected, never noticing subjects/teachers/
-    // periods added afterward.
+    // section was first selected, never noticing constraints/timetables
+    // added afterward.
     refreshKey: `${tab}:${dataEntrySubView}`,
+    // periods/subjects/teachers/requirementsCache are already loaded and
+    // kept live here — handed to the hook instead of it independently
+    // re-fetching the same three lists on every tab switch.
+    periods,
+    subjects,
+    teachers,
+    requirementsCache,
+    setRequirementsCache,
   })
 
   if (inviteToken && !inviteHandled) {
@@ -402,18 +515,30 @@ function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-10 py-8">
-          {schools.length === 0 && (
+          {!schoolsReady ? (
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
+              Loading…
+            </div>
+          ) : schools.length === 0 ? (
             <button
               onClick={() => setAddSchoolOpen(true)}
               className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
             >
               Create your school
             </button>
-          )}
+          ) : null}
 
           {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-          {selectedSchool && (
+          {selectedSchool && !schoolDataReady && (
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
+              Loading…
+            </div>
+          )}
+
+          {selectedSchool && schoolDataReady && (
             // No exit animation (and no AnimatePresence) here on purpose:
             // an in-flight async update on the outgoing tab (e.g. Data
             // Entry's periods/week field saving right as you switch tabs)
@@ -438,10 +563,9 @@ function App() {
                 {tab === 'overview' && (
                   selectedClassGroup ? (
                     <OverviewTab
-                      schoolId={selectedSchoolId}
-                      classGroupId={selectedClassGroupId}
                       classGroup={selectedClassGroup}
                       onNavigate={handleNavigate}
+                      progress={setupProgress}
                     />
                   ) : isViewer ? (
                     <p className="text-sm text-slate-500">
@@ -462,7 +586,16 @@ function App() {
                     schoolId={selectedSchoolId}
                     classGroupId={selectedClassGroupId}
                     institutionType={selectedSchool?.institution_type}
-                    onClassGroupsChanged={() => loadSchoolData(selectedSchoolId)}
+                    subjects={subjects}
+                    setSubjects={setSubjects}
+                    teachers={teachers}
+                    setTeachers={setTeachers}
+                    periods={periods}
+                    rooms={rooms}
+                    classGroups={classGroups}
+                    requirementsCache={requirementsCache}
+                    setRequirementsCache={setRequirementsCache}
+                    onReloadSchoolData={() => loadSchoolData(selectedSchoolId)}
                     readOnly={isViewer}
                     subView={dataEntrySubView}
                     onSubViewChange={setDataEntrySubView}
@@ -476,6 +609,12 @@ function App() {
                       classGroup={selectedClassGroup}
                       classGroups={classGroups}
                       teachers={teachers}
+                      periods={periods}
+                      timetable={timetable}
+                      setTimetable={setTimetable}
+                      generating={generating}
+                      setGenerating={setGenerating}
+                      onPollUntilDone={pollTimetableUntilDone}
                       readOnly={isViewer}
                     />
                   ) : (

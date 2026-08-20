@@ -33,16 +33,31 @@ _ROLE_RANK = {"viewer": 0, "admin": 1}
 
 def get_membership_role(db: Session, user: User, school_id: int) -> str | None:
     """None if the user has no access to this school at all; otherwise
-    "admin" or "viewer"."""
-    school = db.get(School, school_id)
-    if school is not None and school.owner_id == user.id:
-        return "admin"
-    membership = (
-        db.query(SchoolMembership)
-        .filter(SchoolMembership.school_id == school_id, SchoolMembership.user_id == user.id)
+    "admin" or "viewer".
+
+    One query, not two: this used to be `db.get(School, ...)` followed by
+    a separate `SchoolMembership` query when the user wasn't the owner —
+    correct, but every request pays that as a sequential extra round trip
+    to the database purely for an access check, on top of whatever the
+    endpoint itself needs to do. The outer join resolves both the school's
+    owner_id and (if any) this user's membership role in a single round
+    trip; which one wins is then just a Python comparison.
+    """
+    row = (
+        db.query(School.owner_id, SchoolMembership.role)
+        .outerjoin(
+            SchoolMembership,
+            (SchoolMembership.school_id == School.id) & (SchoolMembership.user_id == user.id),
+        )
+        .filter(School.id == school_id)
         .first()
     )
-    return membership.role if membership else None
+    if row is None:
+        return None
+    owner_id, membership_role = row
+    if owner_id == user.id:
+        return "admin"
+    return membership_role
 
 
 def require_school_access(db: Session, user: User, school_id: int, min_role: str = "viewer") -> str:

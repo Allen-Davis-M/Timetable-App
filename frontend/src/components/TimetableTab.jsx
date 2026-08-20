@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { api } from '../api'
 import SubstitutionsTab from './SubstitutionsTab'
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const POLL_INTERVAL_MS = 1500
 
 /**
  * Generates a timetable for the whole school (every section + every
@@ -46,11 +45,30 @@ const POLL_INTERVAL_MS = 1500
  * lives here as a second view instead of adding to the top nav's tab
  * count.
  */
-export default function TimetableTab({ schoolId, classGroup, classGroups, teachers, readOnly = false }) {
+export default function TimetableTab({
+  schoolId,
+  classGroup,
+  classGroups,
+  teachers,
+  // periods/timetable/generating are App.jsx's own state now, not fetched
+  // or held locally here — this component gets unmounted every time the
+  // admin switches to another top-level tab
+  // (`{tab === 'timetable' && (...)}` in App.jsx), so a just-generated
+  // timetable kept only in this component's memory was destroyed on every
+  // tab switch, making it look like it "disappeared" and prompting to
+  // generate a new one. App.jsx fetches it once (as part of
+  // loadSchoolData) and owns it from then on, including polling while a
+  // generation is in progress — even while the admin is on a different
+  // tab — so there's nothing left here that a remount can lose.
+  periods,
+  timetable,
+  setTimetable,
+  generating,
+  setGenerating,
+  onPollUntilDone,
+  readOnly = false,
+}) {
   const [page, setPage] = useState('schedule') // 'schedule' | 'substitutions'
-  const [periods, setPeriods] = useState([])
-  const [timetable, setTimetable] = useState(null) // latest TimetableOut from the backend
-  const [generating, setGenerating] = useState(false)
   const [view, setView] = useState('section') // 'section' | 'teacher'
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id ?? null)
   const [error, setError] = useState(null)
@@ -58,7 +76,6 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
   // Which export format is currently downloading, if any — guards against
   // a double-click firing two downloads with no visual feedback either way.
   const [exporting, setExporting] = useState(null) // null | 'xlsx' | 'pdf'
-  const pollRef = useRef(null)
 
   async function handleExport(format) {
     if (exporting) return
@@ -73,14 +90,6 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
   }
 
   useEffect(() => {
-    api.listPeriods(schoolId).then(setPeriods).catch((err) => setError(err.message))
-    setTimetable(null)
-    stopPolling()
-    return stopPolling
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId])
-
-  useEffect(() => {
     // Re-syncs whenever the teacher list changes — not just when nothing
     // is selected. Without the "still valid" check, switching schools
     // could leave selectedTeacherId pointing at a teacher that doesn't
@@ -91,31 +100,6 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
     if (!stillValid) setSelectedTeacherId(teachers[0]?.id ?? null)
   }, [teachers, selectedTeacherId])
 
-  function stopPolling() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }
-
-  function pollUntilDone(timetableId) {
-    stopPolling()
-    pollRef.current = setInterval(async () => {
-      try {
-        const updated = await api.getTimetable(timetableId)
-        setTimetable(updated)
-        if (updated.status !== 'generating') {
-          stopPolling()
-          setGenerating(false)
-        }
-      } catch (err) {
-        stopPolling()
-        setGenerating(false)
-        setError(err.message)
-      }
-    }, POLL_INTERVAL_MS)
-  }
-
   async function handleGenerate() {
     setGenerating(true)
     setError(null)
@@ -124,7 +108,7 @@ export default function TimetableTab({ schoolId, classGroup, classGroups, teache
       const created = await api.generateTimetable(schoolId)
       setTimetable(created)
       if (created.status === 'generating') {
-        pollUntilDone(created.id)
+        onPollUntilDone(created.id)
       } else {
         setGenerating(false)
       }
