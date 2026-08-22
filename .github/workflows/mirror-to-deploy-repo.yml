@@ -1,0 +1,25 @@
+name: Mirror to deployment repo
+
+# Runs whenever main is pushed in this repo and pushes the same commits
+# to arpithdavid/Timetable-App, which is what Railway/Vercel actually
+# deploy from. Without this, changes pushed here would need a manual
+# `git pull origin main && git push mine main` before they went live.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to deployment repo
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          git remote add deploy "https://x-access-token:${MIRROR_TOKEN}@github.com/arpithdavid/Timetable-App.git"
+          git push deploy HEAD:main
