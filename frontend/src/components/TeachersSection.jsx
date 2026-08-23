@@ -12,11 +12,31 @@ import BulkImportPanel from './BulkImportPanel'
  * a question about the teacher, not something that should require
  * finding them in every relevant subject's own dropdown one at a time.
  */
-export default function TeachersSection({ schoolId, teachers, subjects, onTeachersChanged, readOnly }) {
+// Distinct grade labels across every section, in the order they first
+// appear (not alphabetized — schools tend to enter grades in a natural
+// low-to-high order already, and re-sorting strings would put "Grade 10"
+// before "Grade 2"). Shared by the inline per-teacher picker and
+// AddTeacherModal so the two can't drift.
+function distinctGrades(classGroups) {
+  const seen = new Set()
+  const grades = []
+  for (const cg of classGroups) {
+    if (cg.grade && !seen.has(cg.grade)) {
+      seen.add(cg.grade)
+      grades.push(cg.grade)
+    }
+  }
+  return grades
+}
+
+export default function TeachersSection({ schoolId, teachers, subjects, classGroups, onTeachersChanged, readOnly }) {
   const [error, setError] = useState(null)
   const [showImport, setShowImport] = useState(true)
   const [addTeacherOpen, setAddTeacherOpen] = useState(false)
   const [openDropdownId, setOpenDropdownId] = useState(null)
+  const [openGradeDropdownId, setOpenGradeDropdownId] = useState(null)
+
+  const allGrades = distinctGrades(classGroups)
 
   async function handleAssignSubject(teacher, subjectId) {
     try {
@@ -33,6 +53,27 @@ export default function TeachersSection({ schoolId, teachers, subjects, onTeache
     try {
       await onTeachersChanged.update(teacher.id, {
         qualified_subject_ids: teacher.qualified_subject_ids.filter((id) => id !== subjectId),
+      })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleAssignGrade(teacher, grade) {
+    try {
+      await onTeachersChanged.update(teacher.id, {
+        qualified_grades: [...(teacher.qualified_grades || []), grade],
+      })
+      setOpenGradeDropdownId(null)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleUnassignGrade(teacher, grade) {
+    try {
+      await onTeachersChanged.update(teacher.id, {
+        qualified_grades: (teacher.qualified_grades || []).filter((g) => g !== grade),
       })
     } catch (err) {
       setError(err.message)
@@ -72,6 +113,7 @@ export default function TeachersSection({ schoolId, teachers, subjects, onTeache
           <AddTeacherModal
             schoolId={schoolId}
             subjects={subjects}
+            allGrades={allGrades}
             onClose={() => setAddTeacherOpen(false)}
             onAdded={async () => {
               setAddTeacherOpen(false)
@@ -112,9 +154,16 @@ export default function TeachersSection({ schoolId, teachers, subjects, onTeache
       <div className="flex flex-col divide-y divide-slate-100 rounded-md border border-slate-200">
         {teachers.map((teacher) => {
           const qualified = subjects.filter((s) => teacher.qualified_subject_ids.includes(s.id))
-          const available = subjects.filter((s) => !teacher.qualified_subject_ids.includes(s.id))
+          // Excludes subjects still `_pending` (optimistically shown right
+          // after "+ Add subject" but not yet confirmed by the server) —
+          // picking one here before it has a real id would send that
+          // temporary id to the backend instead of a valid subject id.
+          const available = subjects.filter((s) => !s._pending && !teacher.qualified_subject_ids.includes(s.id))
+          const qualifiedGrades = teacher.qualified_grades || []
+          const availableGrades = allGrades.filter((g) => !qualifiedGrades.includes(g))
           return (
-            <div key={teacher.id} className="flex flex-wrap items-center gap-3 p-3">
+            <div key={teacher.id} className="flex flex-col gap-2 p-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="w-40 flex-none font-medium">{teacher.name}</div>
               <div className="relative flex flex-1 flex-wrap items-center gap-1.5">
                 <AnimatePresence initial={false}>
@@ -189,6 +238,74 @@ export default function TeachersSection({ schoolId, teachers, subjects, onTeache
                 </button>
               )}
             </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 pl-0 sm:pl-[172px]">
+              <span className="mr-1 flex-none text-xs text-slate-400">Grades:</span>
+              {qualifiedGrades.length === 0 && (
+                <span className="text-xs text-slate-400">All grades</span>
+              )}
+              <AnimatePresence initial={false}>
+                {qualifiedGrades.map((g) => (
+                  <motion.span
+                    key={g}
+                    layout
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{ duration: 0.15 }}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-slate-700 px-2.5 py-1 text-xs text-white"
+                  >
+                    {g}
+                    {!readOnly && (
+                      <button
+                        onClick={() => handleUnassignGrade(teacher, g)}
+                        aria-label={`Remove ${g} from ${teacher.name}`}
+                        className="opacity-70 hover:opacity-100"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </motion.span>
+                ))}
+              </AnimatePresence>
+              {!readOnly && allGrades.length > 0 && (
+                <div className="relative">
+                  <motion.button
+                    whileHover={{ scale: 1.04 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => setOpenGradeDropdownId(openGradeDropdownId === teacher.id ? null : teacher.id)}
+                    className="rounded-full border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    {qualifiedGrades.length === 0 ? '+ Restrict to specific grades' : '+ Add'}
+                  </motion.button>
+                  <AnimatePresence>
+                    {openGradeDropdownId === teacher.id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: -4 }}
+                        transition={{ duration: 0.12, ease: 'easeOut' }}
+                        className="absolute left-0 top-7 z-10 max-h-52 w-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-1 shadow-md"
+                      >
+                        {availableGrades.length === 0 && (
+                          <p className="px-2 py-1.5 text-xs text-slate-400">Already covers every grade</p>
+                        )}
+                        {availableGrades.map((g) => (
+                          <div
+                            key={g}
+                            onClick={() => handleAssignGrade(teacher, g)}
+                            className="cursor-pointer rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                          >
+                            {g}
+                          </div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+            </div>
           )
         })}
         {teachers.length === 0 && (
@@ -208,15 +325,25 @@ export default function TeachersSection({ schoolId, teachers, subjects, onTeache
  * how `qualified_subject_ids` is actually modeled (a list) rather than
  * implying one teacher = one subject.
  */
-function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
+function AddTeacherModal({ schoolId, subjects, allGrades, onClose, onAdded }) {
   const [name, setName] = useState('')
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([])
+  // Empty = no restriction (teaches every grade) — same default as
+  // Teacher.qualified_grades server-side, so leaving this untouched here
+  // behaves exactly like every teacher did before this field existed.
+  const [selectedGrades, setSelectedGrades] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
   function toggleSubject(id) {
     setSelectedSubjectIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  function toggleGrade(grade) {
+    setSelectedGrades((prev) =>
+      prev.includes(grade) ? prev.filter((g) => g !== grade) : [...prev, grade]
     )
   }
 
@@ -230,6 +357,7 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
         school_id: schoolId,
         name: name.trim(),
         qualified_subject_ids: selectedSubjectIds,
+        qualified_grades: selectedGrades,
       })
       await onAdded()
     } catch (err) {
@@ -273,14 +401,14 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
             <span className="text-xs font-medium text-slate-500">
               Subjects they teach (optional — a teacher can teach more than one)
             </span>
-            {subjects.length === 0 ? (
+            {subjects.filter((s) => !s._pending).length === 0 ? (
               <p className="text-xs text-slate-400">
                 No subjects yet — add subjects first, or add this teacher now and assign
                 subjects afterward from this list.
               </p>
             ) : (
               <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 p-2">
-                {subjects.map((s) => (
+                {subjects.filter((s) => !s._pending).map((s) => (
                   <label
                     key={s.id}
                     className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-slate-50"
@@ -296,6 +424,29 @@ function AddTeacherModal({ schoolId, subjects, onClose, onAdded }) {
               </div>
             )}
           </div>
+
+          {allGrades.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-slate-500">
+                Grades they teach (optional — leave all unchecked to teach every grade)
+              </span>
+              <div className="max-h-32 overflow-y-auto rounded-md border border-slate-200 p-2">
+                {allGrades.map((g) => (
+                  <label
+                    key={g}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedGrades.includes(g)}
+                      onChange={() => toggleGrade(g)}
+                    />
+                    {g}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 

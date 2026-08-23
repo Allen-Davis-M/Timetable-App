@@ -53,6 +53,22 @@ function App() {
   const [subjects, setSubjects] = useState([])
   const [periods, setPeriods] = useState([])
   const [rooms, setRooms] = useState([])
+  // Constraints — same reasoning as subjects/periods/rooms above: lifted
+  // here instead of fetched independently by ConstraintsTab (which
+  // unmounts on every tab switch) and *again* by useSetupProgress (for
+  // the header bar/OverviewTab), which together used to mean opening
+  // Constraints cost two redundant round trips (constraints + a second,
+  // already-answered fetch of classGroups) before anything on the page
+  // could render.
+  const [constraints, setConstraints] = useState([])
+  // Team membership/invites — same reasoning as constraints above:
+  // TeamTab used to fetch these itself on every mount, and since it fully
+  // remounts on every tab switch (App.jsx's `key={tab}`), the "Owner"
+  // badge and member list took a visible several seconds to appear on
+  // every single visit to Team, even though nothing about who has access
+  // to a school changes from one tab switch to the next.
+  const [members, setMembers] = useState([])
+  const [invites, setInvites] = useState([])
   // Per-section cache of Data Entry's "requirements" (periods/week per
   // subject), `{ [classGroupId]: requirement[] }` — same reasoning as
   // subjects/periods/rooms above: kept here instead of inside
@@ -164,12 +180,22 @@ function App() {
 
   async function loadSchoolData(schoolId) {
     try {
-      const [cg, t, s, p, rm, tts] = await Promise.all([
+      // Members/invites are admin-only endpoints (GET .../members and
+      // .../invites both 403 a viewer) — skipped entirely for a non-admin
+      // rather than let that 403 reject this whole Promise.all and leave
+      // every other tab (Subjects, Teachers, Timetable, ...) with no data
+      // at all just because Team isn't something a viewer can see anyway
+      // (App.jsx only adds the Team tab for `role === 'admin'`).
+      const isAdmin = schools.find((s) => s.id === schoolId)?.role === 'admin'
+      const [cg, t, s, p, rm, c, mem, inv, tts] = await Promise.all([
         api.listClassGroups(schoolId),
         api.listTeachers(schoolId),
         api.listSubjects(schoolId),
         api.listPeriods(schoolId),
         api.listRooms(schoolId),
+        api.listConstraints(schoolId),
+        isAdmin ? api.listMembers(schoolId) : Promise.resolve([]),
+        isAdmin ? api.listInvites(schoolId) : Promise.resolve([]),
         api.listTimetables(schoolId),
       ])
       setClassGroups(cg)
@@ -177,6 +203,9 @@ function App() {
       setSubjects(s)
       setPeriods(p)
       setRooms(rm)
+      setConstraints(c)
+      setMembers(mem)
+      setInvites(inv)
       // No `created_at` on TimetableOut — ids are assigned in creation
       // order, so the highest id is the most recently generated one.
       const latestTimetable = tts.length > 0 ? tts.reduce((a, b) => (b.id > a.id ? b : a)) : null
@@ -193,6 +222,34 @@ function App() {
       setError(err.message)
     } finally {
       setSchoolDataReady(true)
+    }
+  }
+
+  // Narrower than loadSchoolData (which also re-fetches classGroups/
+  // teachers/subjects/periods/rooms/timetables) — a constraint add/edit/
+  // delete/scope-change can't affect any of those, but a full re-fetch of
+  // *constraints* specifically is still needed after one (rather than
+  // patching the changed row locally) because each card's `conflicts` is
+  // computed server-side against every other constraint, so adding or
+  // editing one can change what a completely different card should show.
+  async function reloadConstraints() {
+    try {
+      setConstraints(await api.listConstraints(selectedSchoolId))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  // Narrower than loadSchoolData, same reasoning as reloadConstraints
+  // above — an invite/role-change/remove/revoke only ever affects the
+  // member/invite lists, not any of the school's other data.
+  async function reloadTeam() {
+    try {
+      const [mem, inv] = await Promise.all([api.listMembers(selectedSchoolId), api.listInvites(selectedSchoolId)])
+      setMembers(mem)
+      setInvites(inv)
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -338,6 +395,9 @@ function App() {
     setSubjects([])
     setPeriods([])
     setRooms([])
+    setConstraints([])
+    setMembers([])
+    setInvites([])
     setRequirementsCache({})
     setTimetable(null)
     setGenerating(false)
@@ -369,19 +429,16 @@ function App() {
     schoolId: selectedClassGroup ? selectedSchoolId : null,
     classGroupId: selectedClassGroupId,
     classGroupLabel: selectedClassGroup ? `Section ${selectedClassGroup.name}` : null,
-    // Re-fetch (constraints/timetables only — see useSetupProgress.js)
-    // whenever the admin switches top-level tabs or Data Entry
-    // sub-pages — App.jsx itself never unmounts, so without this the
-    // header bar would only ever reflect counts from the moment a
-    // section was first selected, never noticing constraints/timetables
-    // added afterward.
-    refreshKey: `${tab}:${dataEntrySubView}`,
-    // periods/subjects/teachers/requirementsCache are already loaded and
-    // kept live here — handed to the hook instead of it independently
-    // re-fetching the same three lists on every tab switch.
+    // periods/subjects/teachers/constraints/requirementsCache are already
+    // loaded and kept live here — handed to the hook instead of it
+    // independently re-fetching the same lists on every tab switch (this
+    // used to include its own listConstraints/listTimetables calls,
+    // redundant with both App.jsx's own load and ConstraintsTab's).
     periods,
     subjects,
     teachers,
+    constraints,
+    hasTimetable: timetable?.status === 'draft',
     requirementsCache,
     setRequirementsCache,
   })
@@ -591,7 +648,9 @@ function App() {
                     teachers={teachers}
                     setTeachers={setTeachers}
                     periods={periods}
+                    setPeriods={setPeriods}
                     rooms={rooms}
+                    setRooms={setRooms}
                     classGroups={classGroups}
                     requirementsCache={requirementsCache}
                     setRequirementsCache={setRequirementsCache}
@@ -601,7 +660,15 @@ function App() {
                     onSubViewChange={setDataEntrySubView}
                   />
                 )}
-                {tab === 'constraints' && <ConstraintsTab schoolId={selectedSchoolId} readOnly={isViewer} />}
+                {tab === 'constraints' && (
+                  <ConstraintsTab
+                    schoolId={selectedSchoolId}
+                    classGroups={classGroups}
+                    constraints={constraints}
+                    onReload={reloadConstraints}
+                    readOnly={isViewer}
+                  />
+                )}
                 {tab === 'timetable' && (
                   selectedClassGroup ? (
                     <TimetableTab
@@ -625,7 +692,12 @@ function App() {
                   )
                 )}
                 {tab === 'team' && selectedSchool?.role === 'admin' && (
-                  <TeamTab schoolId={selectedSchoolId} />
+                  <TeamTab
+                    schoolId={selectedSchoolId}
+                    members={members}
+                    invites={invites}
+                    onReload={reloadTeam}
+                  />
                 )}
             </motion.div>
           )}

@@ -106,6 +106,14 @@ class Teacher(Base):
     email = Column(String, nullable=True)
     # subject_ids this teacher is qualified to teach
     qualified_subject_ids = Column(JSON, default=list)
+    # Which grades (ClassGroup.grade label, e.g. "Grade 9") this teacher
+    # teaches. Empty list = no restriction (teaches every grade) — this is
+    # the default and matches every teacher's behavior before this field
+    # existed, so a school that never touches this setting sees no change.
+    # Only meaningful in combination with qualified_subject_ids: the
+    # solver requires *both* to match before assigning a teacher to a
+    # class group's subject requirement (see app/services/solver.py).
+    qualified_grades = Column(JSON, default=list)
     # period_ids this teacher is NOT available (hard constraint shortcut)
     unavailable_period_ids = Column(JSON, default=list)
     max_periods_per_week = Column(Integer, nullable=True)

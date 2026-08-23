@@ -4,13 +4,13 @@ import { api } from '../api'
 /**
  * The six-step journey from a brand-new section to a generated timetable
  * (periods -> subjects -> teachers -> this section's plan -> constraints
- * (optional) -> generate), as real counts fetched from the backend. Used
- * by both the always-visible header progress bar (App.jsx) and the
- * detailed step list (OverviewTab.jsx) so the two can never drift apart —
- * before this, OverviewTab computed its own steps locally and the header
- * had no equivalent at all, meaning progress was invisible on every tab
- * except Overview, which is where a new admin spends the least time (the
- * actual setup work happens on Data Entry and Constraints).
+ * (optional) -> generate), as real counts read from App.jsx's own live
+ * state. Used by both the always-visible header progress bar (App.jsx)
+ * and the detailed step list (OverviewTab.jsx) so the two can never drift
+ * apart — before this, OverviewTab computed its own steps locally and the
+ * header had no equivalent at all, meaning progress was invisible on
+ * every tab except Overview, which is where a new admin spends the least
+ * time (the actual setup work happens on Data Entry and Constraints).
  *
  * Subjects and teachers are two separate steps, not one combined
  * "subjects & teachers" step — they're two separate pages in Data Entry
@@ -22,70 +22,30 @@ export function useSetupProgress({
   schoolId,
   classGroupId,
   classGroupLabel,
-  refreshKey,
-  // periods/subjects/teachers are App.jsx's own state now (see App.jsx's
-  // docstring on why they were lifted out of DataEntryTab) — read
-  // directly here instead of independently re-fetching them, since
-  // App.jsx already keeps them live and this hook re-running its own
-  // fetch of the exact same three lists on every tab switch was the
-  // remaining cause of the header progress bar (and OverviewTab) taking
-  // several seconds to update even after Data Entry itself got fast.
-  // Only constraints/timetables have no equivalent lifted state anywhere
-  // else, so those are the only two this hook still fetches itself.
+  // periods/subjects/teachers/constraints are all App.jsx's own state now
+  // (see App.jsx's docstrings on why each was lifted out of its
+  // originally-owning tab) — read directly here instead of independently
+  // re-fetching them, since App.jsx already keeps them live and this hook
+  // re-running its own fetch of the same lists on every tab switch was
+  // the remaining cause of the header progress bar (and OverviewTab, and
+  // ConstraintsTab itself) taking a visible beat to update even after
+  // Data Entry's equivalent lag had already been fixed.
   periods = [],
   subjects = [],
   teachers = [],
+  constraints = [],
+  hasTimetable = false,
   // Same idea for the per-section `requirements` count — reuses
   // DataEntryTab's own cache (also lifted to App.jsx) instead of a third
   // independent fetch of the same section's data.
   requirementsCache = {},
   setRequirementsCache,
 }) {
-  const [counts, setCounts] = useState({
-    constraints: 0,
-    hasTimetable: false,
-  })
-  const [loaded, setLoaded] = useState(false)
-  // Same reasoning as the old OverviewTab: a failed fetch must not render
-  // as "0 of everything, all still to do" — that's indistinguishable from
-  // a genuinely brand-new section and could tell an already-set-up admin
-  // to redo work they've already done.
+  const loaded = Boolean(schoolId)
+  // Only the per-section requirements fetch below can still fail here —
+  // everything else this hook reports is passed-in state, not something
+  // it fetches itself, so there's nothing else for this to catch.
   const [loadError, setLoadError] = useState(null)
-
-  useEffect(() => {
-    if (!schoolId) return
-    let cancelled = false
-    setLoadError(null)
-
-    async function load() {
-      try {
-        const [constraints, timetables] = await Promise.all([
-          api.listConstraints(schoolId),
-          api.listTimetables(schoolId),
-        ])
-        if (cancelled) return
-        setCounts((prev) => ({
-          ...prev,
-          constraints: constraints.length,
-          hasTimetable: timetables.length > 0,
-        }))
-      } catch (err) {
-        if (!cancelled) setLoadError(err.message)
-      } finally {
-        if (!cancelled) setLoaded(true)
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-    // `refreshKey` (App.jsx passes the active tab) exists purely to force
-    // a re-fetch at natural checkpoints — this hook has no other way to
-    // learn that a constraint/timetable changed elsewhere on the page,
-    // since schoolId alone doesn't change when that happens and this
-    // component doesn't unmount between tab switches.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, refreshKey])
 
   // Cache-aware, same pattern as DataEntryTab.jsx's own loadRequirements:
   // a section already visited in Data Entry is already in the shared
@@ -122,6 +82,7 @@ export function useSetupProgress({
       done: periods.length > 0,
       optional: false,
       tab: 'entry',
+      subView: 'setup',
     },
     {
       key: 'subjects',
@@ -153,16 +114,16 @@ export function useSetupProgress({
     {
       key: 'constraints',
       title: 'Any special rules?',
-      body: counts.constraints > 0 ? `${counts.constraints} rules added` : "Optional — skip if there's nothing special, you can add rules anytime",
-      done: counts.constraints > 0,
+      body: constraints.length > 0 ? `${constraints.length} rules added` : "Optional — skip if there's nothing special, you can add rules anytime",
+      done: constraints.length > 0,
       optional: true,
       tab: 'constraints',
     },
     {
       key: 'generate',
       title: 'Build the timetable',
-      body: counts.hasTimetable ? 'Timetable ready' : 'One click builds a complete, conflict-free schedule',
-      done: counts.hasTimetable,
+      body: hasTimetable ? 'Timetable ready' : 'One click builds a complete, conflict-free schedule',
+      done: hasTimetable,
       optional: false,
       tab: 'timetable',
     },

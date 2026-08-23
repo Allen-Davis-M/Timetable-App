@@ -13,27 +13,19 @@ import { api } from '../api'
  * service wired up yet (see ARCHITECTURE.md). Instead, inviting shows a
  * copyable link right away that you send yourself.
  */
-export default function TeamTab({ schoolId }) {
-  const [members, setMembers] = useState([])
-  const [invites, setInvites] = useState([])
+export default function TeamTab({ schoolId, members, invites, onReload }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('viewer')
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [justCreatedLink, setJustCreatedLink] = useState(null)
 
-  async function load() {
-    try {
-      const [m, i] = await Promise.all([api.listMembers(schoolId), api.listInvites(schoolId)])
-      setMembers(m)
-      setInvites(i)
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
+  // Clears a previously-copied invite link if the admin switches to a
+  // different school while still on this tab (rare — TeamTab normally
+  // fully remounts on a top-level tab switch, which would reset this
+  // anyway — but not on a school switch alone) so it can't be confused
+  // for a link belonging to the newly selected school.
   useEffect(() => {
-    load()
     setJustCreatedLink(null)
   }, [schoolId])
 
@@ -46,7 +38,7 @@ export default function TeamTab({ schoolId }) {
       const invite = await api.createInvite(schoolId, email.trim(), role)
       setJustCreatedLink(`${window.location.origin}${window.location.pathname}?invite=${invite.token}`)
       setEmail('')
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -58,7 +50,7 @@ export default function TeamTab({ schoolId }) {
     setError(null)
     try {
       await api.updateMemberRole(schoolId, userId, newRole)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }
@@ -68,7 +60,7 @@ export default function TeamTab({ schoolId }) {
     setError(null)
     try {
       await api.removeMember(schoolId, userId)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }
@@ -78,7 +70,7 @@ export default function TeamTab({ schoolId }) {
     setError(null)
     try {
       await api.revokeInvite(schoolId, inviteId)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }

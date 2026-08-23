@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { useState } from 'react'
 
 /**
  * CRUD panel for a school's rooms. Optional — a school with no rooms
@@ -9,31 +8,24 @@ import { api } from '../api'
  * every scheduled period, matching a subject's `required_room_type` (set
  * per-subject in the Subjects table) and each room's `capacity` against
  * the class group's `student_count` where those are set.
+ *
+ * `rooms` and the `onCreate`/`onDelete` callbacks are owned by the parent
+ * (DataEntryTab, backed by App.jsx's lifted state) rather than fetched
+ * independently here — same reasoning as PeriodsPanel: rooms are already
+ * loaded school-wide, so a second independent fetch on mount was pure
+ * extra latency for data the app already had.
  */
-export default function RoomsPanel({ schoolId }) {
-  const [rooms, setRooms] = useState([])
+export default function RoomsPanel({ schoolId, rooms, onCreate, onDelete }) {
   const [name, setName] = useState('')
   const [capacity, setCapacity] = useState('')
   const [roomType, setRoomType] = useState('')
   const [error, setError] = useState(null)
 
-  async function load() {
-    try {
-      setRooms(await api.listRooms(schoolId))
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  useEffect(() => {
-    load()
-  }, [schoolId])
-
   async function handleAdd(e) {
     e.preventDefault()
     if (!name.trim()) return
     try {
-      await api.createRoom({
+      await onCreate({
         school_id: schoolId,
         name: name.trim(),
         capacity: capacity === '' ? null : Number(capacity),
@@ -42,7 +34,6 @@ export default function RoomsPanel({ schoolId }) {
       setName('')
       setCapacity('')
       setRoomType('')
-      await load()
     } catch (err) {
       setError(err.message)
     }
@@ -50,8 +41,7 @@ export default function RoomsPanel({ schoolId }) {
 
   async function handleDelete(id) {
     try {
-      await api.deleteRoom(id)
-      await load()
+      await onDelete(id)
     } catch (err) {
       setError(err.message)
     }

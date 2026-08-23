@@ -265,12 +265,24 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
         return n if isinstance(n, int) and n >= 2 else 1
 
     for req in requirements:
+        req_class_group = class_groups_by_id.get(req.class_group_id)
+        req_grade = req_class_group.grade if req_class_group else None
         if req.preferred_teacher_id:
+            # An explicit pin is an admin override — same as it already
+            # bypasses the subject-qualification check below, it bypasses
+            # the grade check too, rather than silently failing to honor a
+            # pin the admin set deliberately.
             candidate_ids = [req.preferred_teacher_id] if req.preferred_teacher_id in teachers_by_id else []
         else:
             candidate_ids = [
                 t.id for t in teachers
                 if req.subject_id in (t.qualified_subject_ids or [])
+                # Empty qualified_grades = no restriction (teaches every
+                # grade) — see Teacher.qualified_grades' docstring. Only
+                # class groups with a grade set can be checked against it;
+                # a class group with no grade label never excludes a
+                # grade-restricted teacher purely for lacking one.
+                and (not (t.qualified_grades or []) or not req_grade or req_grade in t.qualified_grades)
             ]
         candidate_ids_by_req[req.id] = candidate_ids
 
@@ -281,7 +293,8 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
             cg_label = _class_group_label(cg) if cg else f"class_group_id={req.class_group_id}"
             errors.append(
                 f"No qualified teacher found for {subject_name} in {cg_label}. Assign a "
-                f"teacher qualified for this subject, or set a preferred teacher on the requirement."
+                f"teacher qualified for this subject and grade, or set a preferred teacher on "
+                f"the requirement."
             )
             continue
 

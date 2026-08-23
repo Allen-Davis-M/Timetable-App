@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.access import require_school_access
@@ -16,7 +17,24 @@ def create_period(payload: PeriodCreate, db: Session = Depends(get_db), current_
     require_school_access(db, current_user, payload.school_id, min_role="admin")
     period = Period(**payload.model_dump())
     db.add(period)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Period has a DB-level uniqueness rule on (school_id, day_of_week,
+        # order) — two periods can't share the same slot on the same day.
+        # Without this catch, a duplicate insert (e.g. clicking "Quick
+        # setup" twice, or manually adding a slot that already exists)
+        # surfaced as a raw 500 with a Postgres stack trace instead of a
+        # message the admin can actually act on. db.rollback() is required
+        # here — SQLAlchemy leaves the session unusable after a failed
+        # flush until the transaction is explicitly rolled back, so any
+        # *next* query on this session (even an unrelated one) would
+        # otherwise also fail.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"A period already exists for day {payload.day_of_week}, slot {payload.order}.",
+        )
     db.refresh(period)
     return period
 

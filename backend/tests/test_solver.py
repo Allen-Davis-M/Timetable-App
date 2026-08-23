@@ -148,3 +148,64 @@ def test_no_subject_last_period_constraint_is_respected(db_session):
     assert scheduled_period_ids.isdisjoint(last_period_ids), (
         "Subject was scheduled in the last period of the day despite a no_subject_period ban"
     )
+
+
+def test_teacher_qualified_grades_is_respected(db_session):
+    """A teacher whose Teacher.qualified_grades is non-empty should only be
+    assignable to class groups whose grade is in that list — e.g. a Math
+    teacher qualified only for 'Grade 9' should never be assigned to a
+    'Grade 8' section's Math requirement, even if they're the only teacher
+    qualified for the subject there (the solve should report infeasible /
+    an explanatory error instead of silently assigning them anyway)."""
+    db = db_session
+    school = _make_school_with_periods(db, days=5, periods_per_day=2)
+
+    subject = Subject(school_id=school.id, name="Math")
+    db.add(subject)
+    db.commit()
+    db.refresh(subject)
+
+    # Qualified for Math, but only in Grade 9 — should never be assigned to
+    # the Grade 8 section below.
+    teacher = Teacher(
+        school_id=school.id,
+        name="Priya Sharma",
+        qualified_subject_ids=[subject.id],
+        qualified_grades=["Grade 9"],
+    )
+    db.add(teacher)
+    db.commit()
+    db.refresh(teacher)
+
+    grade_8 = ClassGroup(school_id=school.id, grade="Grade 8", name="A")
+    db.add(grade_8)
+    db.commit()
+    db.refresh(grade_8)
+
+    db.add(SubjectRequirement(class_group_id=grade_8.id, subject_id=subject.id, periods_per_week=2))
+    db.commit()
+
+    result = generate_school_timetable(db, school.id)
+
+    assert result.status == "infeasible"
+    assert any("no qualified teacher" in e.lower() for e in result.errors), result.errors
+
+    # Now add a second class group in Grade 9 — the same teacher should be
+    # assignable there, proving the restriction is a match, not a blanket
+    # exclusion of this teacher.
+    grade_9 = ClassGroup(school_id=school.id, grade="Grade 9", name="A")
+    db.add(grade_9)
+    db.commit()
+    db.refresh(grade_9)
+
+    # Remove the unsatisfiable Grade 8 requirement so this second solve
+    # isn't infeasible for the same reason as above.
+    db.query(SubjectRequirement).filter(SubjectRequirement.class_group_id == grade_8.id).delete()
+    db.add(SubjectRequirement(class_group_id=grade_9.id, subject_id=subject.id, periods_per_week=2))
+    db.commit()
+
+    result = generate_school_timetable(db, school.id)
+
+    assert result.status in ("optimal", "feasible"), result.errors
+    assert len(result.assignments) == 2
+    assert all(a["teacher_id"] == teacher.id for a in result.assignments)

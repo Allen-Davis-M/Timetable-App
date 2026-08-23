@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import BulkImportPanel from './BulkImportPanel'
 
 /**
@@ -148,15 +148,26 @@ export default function SubjectsSection({ schoolId, subjects, onSubjectsChanged,
           </tr>
         </thead>
         <tbody>
-          {subjects.map((subject, i) => (
-            <motion.tr
-              key={subject.id}
-              layout="position"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18, delay: Math.min(i, 10) * 0.02, ease: 'easeOut' }}
-              className="border-b border-slate-100"
-            >
+          {/* `initial={false}` skips the enter animation for rows already
+              present when this table mounts — without it, every plain tab
+              switch back to Subjects replayed a staggered fade-in for the
+              *entire* list (DataEntryTab fully remounts on every top-level
+              tab switch — see App.jsx's `key={tab}` — so this ran on every
+              single visit, not just when a subject was actually added).
+              With it, only a genuinely new row (or one being removed)
+              animates; everything else just appears, instantly, matching
+              the pattern TeachersSection's chips already use. */}
+          <AnimatePresence initial={false}>
+            {subjects.map((subject) => (
+              <motion.tr
+                key={subject.id}
+                layout="position"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="border-b border-slate-100"
+              >
               <td className="py-2 pr-2">
                 <label htmlFor={`subject-name-${subject.id}`} className="sr-only">
                   Subject name
@@ -164,11 +175,12 @@ export default function SubjectsSection({ schoolId, subjects, onSubjectsChanged,
                 <input
                   id={`subject-name-${subject.id}`}
                   defaultValue={subject.name}
-                  disabled={readOnly}
+                  disabled={readOnly || subject._pending}
                   onBlur={(e) => e.target.value !== subject.name && handleUpdateName(subject.id, e.target.value)}
                   className="w-full max-w-sm rounded px-1.5 py-1 text-sm hover:bg-slate-50 focus:bg-slate-50 focus:outline-none disabled:bg-transparent disabled:text-slate-700"
                 />
-                {expandedAdvanced.has(subject.id) ? (
+                {subject._pending && <span className="ml-1.5 text-[11px] text-slate-400">Saving…</span>}
+                {subject._pending ? null : expandedAdvanced.has(subject.id) ? (
                   <>
                     <label htmlFor={`subject-room-type-${subject.id}`} className="sr-only">
                       Required room type (optional)
@@ -243,7 +255,7 @@ export default function SubjectsSection({ schoolId, subjects, onSubjectsChanged,
                 )}
               </td>
               <td className="py-2">
-                {!readOnly && (
+                {!readOnly && !subject._pending && (
                   <button
                     onClick={() => handleRemoveSubject(subject.id, subject.name)}
                     className="text-slate-300 hover:text-red-600"
@@ -255,7 +267,8 @@ export default function SubjectsSection({ schoolId, subjects, onSubjectsChanged,
                 )}
               </td>
             </motion.tr>
-          ))}
+            ))}
+          </AnimatePresence>
           {subjects.length === 0 && (
             <tr>
               <td colSpan={2} className="py-4 text-sm text-slate-500">

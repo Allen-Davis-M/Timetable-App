@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { useState } from 'react'
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -8,31 +7,25 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
  * treats these as the units it assigns subjects into, so a school needs at
  * least as many periods as the sum of its weekly subject requirements
  * before generation can succeed.
+ *
+ * `periods` and the `onCreate`/`onDelete` callbacks are owned by the
+ * parent (DataEntryTab, backed by App.jsx's lifted state) rather than
+ * fetched independently here — periods are already loaded school-wide by
+ * the time this panel mounts, so an independent fetch-on-mount was a pure
+ * extra round trip (and the visible cause of a beat of blank/stale periods
+ * every time the Setup page was opened) for data the app already had.
  */
-export default function PeriodsPanel({ schoolId }) {
-  const [periods, setPeriods] = useState([])
+export default function PeriodsPanel({ schoolId, periods, onCreate, onDelete }) {
   const [dayOfWeek, setDayOfWeek] = useState(0)
   const [order, setOrder] = useState('')
   const [label, setLabel] = useState('')
   const [error, setError] = useState(null)
 
-  async function load() {
-    try {
-      setPeriods(await api.listPeriods(schoolId))
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  useEffect(() => {
-    load()
-  }, [schoolId])
-
   async function handleAdd(e) {
     e.preventDefault()
     if (order === '') return
     try {
-      await api.createPeriod({
+      await onCreate({
         school_id: schoolId,
         day_of_week: Number(dayOfWeek),
         order: Number(order),
@@ -40,7 +33,6 @@ export default function PeriodsPanel({ schoolId }) {
       })
       setOrder('')
       setLabel('')
-      await load()
     } catch (err) {
       setError(err.message)
     }
@@ -48,8 +40,7 @@ export default function PeriodsPanel({ schoolId }) {
 
   async function handleDelete(id) {
     try {
-      await api.deletePeriod(id)
-      await load()
+      await onDelete(id)
     } catch (err) {
       setError(err.message)
     }

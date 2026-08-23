@@ -56,29 +56,12 @@ const SCOPABLE_TYPES = new Set([
  * the same subject, or two "must be"/"must not be" day rules for the same
  * subject, that can never both be true).
  */
-export default function ConstraintsTab({ schoolId, readOnly = false }) {
-  const [constraints, setConstraints] = useState([])
-  const [classGroups, setClassGroups] = useState([])
+export default function ConstraintsTab({ schoolId, classGroups, constraints, onReload, readOnly = false }) {
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [scopeEditingId, setScopeEditingId] = useState(null)
-
-  async function load() {
-    try {
-      const [c, cg] = await Promise.all([api.listConstraints(schoolId), api.listClassGroups(schoolId)])
-      setConstraints(c)
-      setClassGroups(cg)
-      setError(null)
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  useEffect(() => {
-    load()
-  }, [schoolId])
 
   function classGroupLabel(cg) {
     return cg.grade ? `${cg.grade} - ${cg.name}` : cg.name
@@ -93,7 +76,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
     try {
       await api.parseConstraint(schoolId, text)
       setInput('')
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -106,7 +89,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
     setError(null)
     try {
       await api.deleteConstraint(id)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }
@@ -118,7 +101,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
     try {
       await api.reparseConstraint(id, text.trim())
       setEditingId(null)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }
@@ -135,7 +118,7 @@ export default function ConstraintsTab({ schoolId, readOnly = false }) {
       }
       await api.updateConstraint(constraint.id, { parameters })
       setScopeEditingId(null)
-      await load()
+      await onReload()
     } catch (err) {
       setError(err.message)
     }

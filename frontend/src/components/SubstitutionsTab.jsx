@@ -209,9 +209,9 @@ export default function SubstitutionsTab({ schoolId, teachers, classGroups }) {
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Substitutions</h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setView('new')}
             className={`px-4 py-2 rounded font-medium transition-colors ${

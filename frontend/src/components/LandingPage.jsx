@@ -1,7 +1,6 @@
 import { motion } from 'framer-motion'
-import { Fragment } from 'react'
-import { GridBackground, Spotlight, GlowCard } from './Spotlight'
-import { Marquee } from './Marquee'
+import { Fragment, useEffect, useState } from 'react'
+import { GridBackground, GlowCard } from './Spotlight'
 
 /**
  * Marketing landing page — what an unauthenticated visitor sees before
@@ -30,35 +29,40 @@ import { Marquee } from './Marquee'
  *     once the app is hosted somewhere presentable.
  */
 
+// Each card leads with the outcome for the institution, not the
+// mechanism behind it (plain English input, a CP-SAT solver, etc.) —
+// people don't shop for a solver, they shop for their term-planning
+// headache going away. The "how" still shows up in the second sentence
+// for anyone who wants it, but it's not the headline.
 const FEATURES = [
   {
-    title: 'Describe rules in plain English',
-    body: "\"Math can't follow PE\" or \"No PE on Fridays\" — type scheduling rules as sentences. An LLM (with a regex fallback when no API key is set) turns them into real constraints the solver enforces.",
+    title: 'Save weeks of admin work every term',
+    body: 'Type your scheduling rules as plain sentences instead of wrestling with spreadsheet formulas, and get a working timetable in an afternoon.',
     icon: '✦',
   },
   {
-    title: 'A real optimization solver',
-    body: 'Built on Google OR-Tools\' CP-SAT solver — the same class of technology used for airline crew scheduling and factory planning, not a greedy heuristic that gives up on hard cases.',
+    title: 'Hand out a schedule with zero clashes',
+    body: 'No teacher double-booked, no class in two places at once. Every timetable is checked against every rule before it ever reaches you.',
     icon: '◈',
   },
   {
-    title: 'Bulk import from CSV/Excel',
-    body: "Already have your teachers, subjects, and sections in a spreadsheet? Upload it instead of typing everything in one at a time.",
+    title: 'Go live in a day, not a week',
+    body: 'Already have your teachers, subjects, and sections in a spreadsheet? Upload it and start scheduling right away, instead of re-typing everything by hand.',
     icon: '⇪',
   },
   {
-    title: 'Know why it failed, not just that it did',
-    body: "When a schedule is impossible, most tools just say \"infeasible.\" This diagnoses the specific cause — an overloaded teacher, an over-subscribed section — so you know exactly what to fix.",
+    title: "Never get stuck guessing what went wrong",
+    body: "When a schedule can't be built, you're told exactly which teacher or section is the problem, so it takes minutes to fix, not hours of trial and error.",
     icon: '⚑',
   },
   {
-    title: 'Edit by hand, lock what matters',
-    body: 'Drag a period to move it, lock a slot so it survives the next regeneration, or swap two classes in one move. The solver works around your manual edits, not the other way around.',
+    title: 'Adapt without rebuilding from scratch',
+    body: 'Lock in the parts of a schedule that already work and adjust the rest by hand. One change to one class does not mean starting over.',
     icon: '⚙',
   },
   {
-    title: 'Bring your whole team in',
-    body: 'Invite an office admin or vice principal with full access, or a read-only viewer. Everyone sees the same live schedule — no emailing spreadsheets back and forth.',
+    title: 'Keep your whole staff on the same page',
+    body: 'Office admins, vice principals, and teachers all see one live schedule, instead of five different spreadsheet versions emailed back and forth.',
     icon: '⌘',
   },
 ]
@@ -113,17 +117,56 @@ const fadeUp = {
   show: { opacity: 1, y: 0 },
 }
 
+/**
+ * A typewriter-style word cycler: types out each word in `words`
+ * character by character, pauses, deletes it, then moves to the next
+ * word and loops. Used in the Hero headline so "for your ___" cycles
+ * through "schools" / "colleges" / "institutions" instead of picking
+ * just one — matches the reference video's headline animation.
+ */
+function TypingWords({ words, typingSpeedMs = 90, deletingSpeedMs = 45, pauseMs = 1400 }) {
+  const [wordIndex, setWordIndex] = useState(0)
+  const [charCount, setCharCount] = useState(0)
+  const [deleting, setDeleting] = useState(false)
+
+  useEffect(() => {
+    const currentWord = words[wordIndex]
+
+    if (!deleting && charCount === currentWord.length) {
+      const pause = setTimeout(() => setDeleting(true), pauseMs)
+      return () => clearTimeout(pause)
+    }
+
+    if (deleting && charCount === 0) {
+      setDeleting(false)
+      setWordIndex((prev) => (prev + 1) % words.length)
+      return
+    }
+
+    const timeout = setTimeout(
+      () => setCharCount((prev) => prev + (deleting ? -1 : 1)),
+      deleting ? deletingSpeedMs : typingSpeedMs
+    )
+    return () => clearTimeout(timeout)
+  }, [charCount, deleting, wordIndex, words, typingSpeedMs, deletingSpeedMs, pauseMs])
+
+  return (
+    <span className="text-indigo-600">
+      {words[wordIndex].slice(0, charCount)}
+      <span className="ml-0.5 inline-block w-0.5 animate-pulse bg-indigo-600 align-middle" style={{ height: '0.85em' }} />
+    </span>
+  )
+}
+
 export default function LandingPage({ onGetStarted }) {
   return (
     <div className="min-h-screen bg-white text-slate-900">
       <LandingNav onGetStarted={onGetStarted} />
       <Hero onGetStarted={onGetStarted} />
-      <LogoStrip />
       <Features />
       <HowItWorks />
       <Pricing onGetStarted={onGetStarted} />
       <Testimonials />
-      <FinalCta onGetStarted={onGetStarted} />
       <Footer />
     </div>
   )
@@ -132,19 +175,32 @@ export default function LandingPage({ onGetStarted }) {
 function LandingNav({ onGetStarted }) {
   return (
     <div className="sticky top-0 z-30 border-b border-slate-100 bg-white/80 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-600 text-sm font-semibold text-white">
-            T
+      {/* No max-w-6xl/mx-auto here unlike the rest of the page's sections —
+          that centers a fixed-width column and leaves equal, growing
+          margins on both sides as the viewport widens, which is exactly
+          why the logo never actually reached the true left edge like
+          Asana/Docusign's headers do. This bar instead spans the full
+          width with fixed edge padding, so the logo and nav sit close to
+          the real left edge on any screen size. */}
+      <div className="flex items-center px-8 py-4 md:px-16 lg:px-28">
+        {/* Logo + nav links grouped together on the left (Asana/Docusign-
+            style layout) instead of the logo/nav/CTA being spread evenly
+            across the bar with justify-between — the nav reads as
+            belonging to the brand mark, not as a separate centered block. */}
+        <div className="flex items-center gap-8">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-600 text-sm font-semibold text-white">
+              T
+            </div>
+            <span className="text-sm font-semibold">Timetable</span>
           </div>
-          <span className="text-sm font-semibold">Timetable</span>
+          <nav className="hidden items-center gap-8 text-sm text-slate-600 md:flex">
+            <a href="#features" className="hover:text-slate-900">Why Timetable</a>
+            <a href="#how-it-works" className="hover:text-slate-900">How it Works</a>
+            <a href="#pricing" className="hover:text-slate-900">Plans and Pricing</a>
+          </nav>
         </div>
-        <nav className="hidden items-center gap-8 text-sm text-slate-600 md:flex">
-          <a href="#features" className="hover:text-slate-900">Features</a>
-          <a href="#how-it-works" className="hover:text-slate-900">How it works</a>
-          <a href="#pricing" className="hover:text-slate-900">Pricing</a>
-        </nav>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-3">
           <button onClick={onGetStarted} className="text-sm font-medium text-slate-600 hover:text-slate-900">
             Sign in
           </button>
@@ -164,20 +220,26 @@ function Hero({ onGetStarted }) {
   return (
     <section className="relative overflow-hidden">
       <GridBackground />
-      <Spotlight className="left-1/2 top-0 -translate-x-1/2" />
       <div className="relative mx-auto max-w-6xl px-6 pb-20 pt-16 md:pt-24">
       <div className="grid items-center gap-14 md:grid-cols-2">
         <motion.div initial="hidden" animate="show" variants={fadeUp} transition={{ duration: 0.6 }}>
-          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Built for Indian schools &amp; colleges
-          </div>
+          {/* The cycling word sits on its own dedicated line (explicit <br/>,
+              not just wrapping wherever it happens to land) so its
+              changing width can never push "Instant timetable software,"
+              onto an extra line. Without this, "institutions" (12 chars)
+              wrapping the headline from 2 lines to 3 grew the left
+              column's height, and since the hero grid uses items-center,
+              that re-centered the whole row and dragged the timetable
+              mockup on the right down with it every time the word got
+              longer, then back up when it got shorter. */}
           <h1 className="text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
-            Conflict-free timetables, generated in minutes — not weeks.
+            Instant timetable software,
+            <br />
+            for your <TypingWords words={['schools', 'colleges', 'institutions']} />
           </h1>
           <p className="mt-5 max-w-lg text-lg text-slate-500">
-            Describe your scheduling rules in plain English, and a real optimization solver builds
-            the whole institution's timetable at once — every section, every teacher, zero clashes.
+            Describe your scheduling rules in plain English and get a complete, ready-to-use
+            timetable for every section and every teacher, with zero clashes.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
@@ -256,41 +318,6 @@ function TimetableMockup() {
   )
 }
 
-// Real feature highlights, not customer logos — see this file's top
-// docstring on why a marquee of invented company names would be
-// misleading when there are no real customers to show yet.
-const HIGHLIGHT_CHIPS = [
-  'Zero teacher clashes',
-  'CP-SAT solver',
-  'Plain-English rules',
-  'CSV/Excel bulk import',
-  'Drag-to-edit grid',
-  'Excel & PDF export',
-  'Multi-admin access',
-  'Infeasibility diagnostics',
-]
-
-function LogoStrip() {
-  return (
-    <div className="border-y border-slate-100 bg-slate-50/60 py-6">
-      <p className="mb-3 text-center text-xs uppercase tracking-wide text-slate-400">
-        Built for schools & colleges that are done fighting spreadsheets
-      </p>
-      <Marquee
-        speed={32}
-        items={HIGHLIGHT_CHIPS.map((label) => (
-          <span
-            key={label}
-            className="whitespace-nowrap rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600"
-          >
-            {label}
-          </span>
-        ))}
-      />
-    </div>
-  )
-}
-
 function Features() {
   return (
     <section id="features" className="mx-auto max-w-6xl px-6 py-24">
@@ -304,7 +331,7 @@ function Features() {
       >
         <h2 className="text-3xl font-semibold tracking-tight">Everything the job actually needs</h2>
         <p className="mt-3 text-slate-500">
-          Not a generic scheduler with "school" bolted on — built around how Indian schools and colleges
+          Not a generic scheduler with "school" bolted on, but built around how Indian schools and colleges
           actually plan a term.
         </p>
       </motion.div>
@@ -319,8 +346,16 @@ function Features() {
             variants={fadeUp}
             transition={{ duration: 0.4, delay: (i % 3) * 0.08 }}
             whileHover={{ y: -4 }}
+            className="h-full"
           >
-            <GlowCard className="rounded-xl border border-slate-200 p-6 transition-shadow hover:shadow-lg hover:shadow-slate-200/60">
+            {/* h-full here (and on the motion.div above) so the visible
+                bordered box actually fills the row height the CSS grid
+                already stretches its wrapper to, instead of just sizing
+                to its own text — otherwise a card with less copy than
+                its row-mates left its border sitting short of where the
+                row actually ends, making rows look ragged whenever card
+                lengths weren't hand-tuned to match exactly. */}
+            <GlowCard className="flex h-full flex-col rounded-xl border border-slate-200 p-6 transition-shadow hover:shadow-lg hover:shadow-slate-200/60">
               <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-lg text-white">
                 {f.icon}
               </div>
@@ -335,7 +370,7 @@ function Features() {
 }
 
 const STEPS = [
-  { n: '01', title: 'Set up your school', body: 'Periods, subjects, teachers, and sections — type them in or bulk-import a spreadsheet.' },
+  { n: '01', title: 'Set up your school', body: 'Periods, subjects, teachers, and sections: type them in or bulk-import a spreadsheet.' },
   { n: '02', title: 'Describe your rules', body: 'Plain-English constraints, scoped to a subject, teacher, day, or specific section.' },
   { n: '03', title: 'Generate', body: 'The solver builds every section\'s schedule at once, with zero teacher or room clashes.' },
   { n: '04', title: 'Fine-tune and export', body: 'Lock slots, drag to adjust, then export to Excel or PDF for the staff room wall.' },
@@ -391,7 +426,7 @@ function Pricing({ onGetStarted }) {
         <p className="mt-3 text-slate-500">Pick what fits your school. Change or cancel anytime.</p>
       </motion.div>
       <p className="mx-auto mb-10 max-w-md text-center text-xs text-amber-600">
-        Illustrative pricing — final numbers to be confirmed.
+        Illustrative pricing. Final numbers to be confirmed.
       </p>
 
       <div className="grid gap-6 md:grid-cols-3">
@@ -469,37 +504,11 @@ function Testimonials() {
               className="rounded-xl border border-slate-200 bg-white p-6"
             >
               <p className="text-sm leading-relaxed text-slate-600">"{t.quote}"</p>
-              <p className="mt-4 text-xs font-medium text-slate-400">— {t.role}</p>
+              <p className="mt-4 text-xs font-medium text-slate-400">{t.role}</p>
             </motion.div>
           ))}
         </div>
       </div>
-    </section>
-  )
-}
-
-function FinalCta({ onGetStarted }) {
-  return (
-    <section className="mx-auto max-w-6xl px-6 py-24">
-      <motion.div
-        initial="hidden"
-        whileInView="show"
-        viewport={{ once: true, amount: 0.4 }}
-        variants={fadeUp}
-        transition={{ duration: 0.5 }}
-        className="rounded-2xl bg-indigo-600 px-8 py-16 text-center text-white"
-      >
-        <h2 className="text-3xl font-semibold tracking-tight">Ready to stop building timetables by hand?</h2>
-        <p className="mx-auto mt-3 max-w-md text-slate-300">
-          Set up your first section in a few minutes and see a full schedule generate itself.
-        </p>
-        <button
-          onClick={onGetStarted}
-          className="mt-8 rounded-md bg-white px-6 py-3 text-sm font-medium text-slate-900 hover:bg-slate-100"
-        >
-          Get started free
-        </button>
-      </motion.div>
     </section>
   )
 }

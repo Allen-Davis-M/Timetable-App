@@ -27,16 +27,20 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
  * wants.
  *
  * Once a timetable is generated, individual slots can be hand-edited in
- * the "By Section" view: click the lock icon to pin a slot so the next
- * regenerate leaves it exactly where it is (see PATCH
+ * the "By Section" view: click a slot to lock/unlock it (locked = the next
+ * regenerate leaves it exactly where it is — see PATCH
  * /api/timetables/entries/{id} in backend/app/routers/timetables.py, and
  * the locked-entry handling in backend/app/services/solver.py), or drag
- * an unlocked entry to a different period to move it by hand. Both go
- * through the same PATCH endpoint, which rejects the change with a
- * message if it would double-book the class, the teacher, or the room —
- * that message is what ends up in `error` and shown below the grid.
- * Editing is section-view-only: the "By Teacher" view mixes entries from
- * several different classes, where "move this" is ambiguous.
+ * an unlocked entry to a different period to move it by hand. There's no
+ * lock icon — locked/unlocked is shown as a light red/green tint on the
+ * whole cell instead, so the state reads at a glance across the whole
+ * grid. Both lock-toggling and moving go through the same PATCH endpoint,
+ * which rejects the change with a message if it would double-book the
+ * class, the teacher, or the room — that message is what ends up in
+ * `error` and shown below the grid. Editing is section-view-only: the "By
+ * Teacher" view mixes entries from several different classes, where "move
+ * this" is ambiguous (though the red/green tint still shows there, as
+ * information).
  *
  * `page` toggles between this generated-schedule view and Substitutions
  * (SubstitutionsTab) — they used to be separate top-level tabs, but
@@ -118,20 +122,28 @@ export default function TimetableTab({
     }
   }
 
-  async function refreshTimetable() {
-    if (!timetable) return
-    try {
-      setTimetable(await api.getTimetable(timetable.id))
-    } catch (err) {
-      setError(err.message)
-    }
+  // Patches the one (or two, for a swap) entries the server actually
+  // returned into local state instead of re-fetching the whole timetable
+  // — refetching every entry in the school just to reflect a single
+  // lock/move/swap was the cause of the lock toggle visibly taking 5-10
+  // seconds to show its new state (a school-wide timetable can be
+  // hundreds of rows; PATCH/swap already return the exact row(s) that
+  // changed, so there's nothing else here that could have gone stale).
+  function applyEntryUpdates(...updated) {
+    setTimetable((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        entries: prev.entries.map((e) => updated.find((u) => u.id === e.id) ?? e),
+      }
+    })
   }
 
   async function handleToggleLock(entry) {
     setError(null)
     try {
-      await api.updateTimetableEntry(entry.id, { locked: !entry.locked })
-      await refreshTimetable()
+      const updated = await api.updateTimetableEntry(entry.id, { locked: !entry.locked })
+      applyEntryUpdates(updated)
     } catch (err) {
       setError(err.message)
     }
@@ -158,11 +170,12 @@ export default function TimetableTab({
         // Target cell is already occupied — a plain move would look like
         // a double-booking (the other entry is still "there" until it
         // moves too), so swap both entries' periods in one request instead.
-        await api.swapTimetableEntries(entryId, targetEntry.id)
+        const [a, b] = await api.swapTimetableEntries(entryId, targetEntry.id)
+        applyEntryUpdates(a, b)
       } else {
-        await api.updateTimetableEntry(entryId, { period_id: targetPeriod.id })
+        const updated = await api.updateTimetableEntry(entryId, { period_id: targetPeriod.id })
+        applyEntryUpdates(updated)
       }
-      await refreshTimetable()
     } catch (err) {
       setError(err.message)
     }
@@ -228,8 +241,9 @@ export default function TimetableTab({
             sections never overlap. Large schools can take up to a minute —
             feel free to switch tabs while it runs. In the By Section view
             you can drag a slot onto a free cell to move it, drag it onto
-            another slot to swap the two, or click 🔓 to lock it in place
-            before regenerating.
+            another slot to swap the two, or click a slot to lock it in
+            place before regenerating — locked slots are shown in red,
+            unlocked ones in green.
           </p>
         </div>
         {!readOnly && (
@@ -379,12 +393,22 @@ export default function TimetableTab({
                       // an edit that wouldn't survive regeneration anyway.
                       const isBatched = entries.length > 1
                       const singleEntry = entries.length === 1 ? entries[0] : null
+                      // Locked/unlocked is shown as a light background tint
+                      // on the whole cell instead of a lock icon on the
+                      // entry — red for locked, green for unlocked — so
+                      // the state is visible at a glance across the whole
+                      // grid, not just on hover/inspection of one cell.
+                      const lockTint = singleEntry
+                        ? singleEntry.locked
+                          ? 'bg-red-50 hover:bg-red-100'
+                          : 'bg-emerald-50 hover:bg-emerald-100'
+                        : isBatched
+                        ? 'hover:bg-slate-50'
+                        : ''
                       return (
                         <td
                           key={d}
-                          className={`border border-slate-200 px-3 py-2 transition-colors ${editable ? 'align-top' : ''} ${
-                            singleEntry || isBatched ? 'hover:bg-slate-50' : ''
-                          }`}
+                          className={`border border-slate-200 px-3 py-2 transition-colors ${editable ? 'align-top' : ''} ${lockTint}`}
                           onDragOver={editable && !isBatched ? (e) => e.preventDefault() : undefined}
                           onDrop={editable && !isBatched ? () => handleDrop(d, order) : undefined}
                         >
@@ -417,20 +441,25 @@ export default function TimetableTab({
                               draggable={editable && !singleEntry.locked}
                               onDragStart={editable ? () => setDragEntryId(singleEntry.id) : undefined}
                               onDragEnd={() => setDragEntryId(null)}
-                              className={editable && !singleEntry.locked ? 'cursor-move' : ''}
+                              onClick={editable ? () => handleToggleLock(singleEntry) : undefined}
+                              title={
+                                editable
+                                  ? singleEntry.locked
+                                    ? 'Locked — click to unlock (movable, may change on regenerate)'
+                                    : 'Click to lock in place before regenerating'
+                                  : singleEntry.locked
+                                  ? 'Locked in place'
+                                  : undefined
+                              }
+                              className={
+                                editable
+                                  ? singleEntry.locked
+                                    ? 'cursor-pointer'
+                                    : 'cursor-move'
+                                  : ''
+                              }
                             >
-                              <div className="flex items-start justify-between gap-1">
-                                <div className="font-medium">{singleEntry.subject_name}</div>
-                                {editable && (
-                                  <button
-                                    onClick={() => handleToggleLock(singleEntry)}
-                                    title={singleEntry.locked ? 'Unlock (movable, may change on regenerate)' : 'Lock (kept in place on regenerate)'}
-                                    className={`text-xs leading-none ${singleEntry.locked ? 'text-amber-600' : 'text-slate-300 hover:text-slate-500'}`}
-                                  >
-                                    {singleEntry.locked ? '🔒' : '🔓'}
-                                  </button>
-                                )}
-                              </div>
+                              <div className="font-medium">{singleEntry.subject_name}</div>
                               <div className="text-xs text-slate-500">
                                 {view === 'section' ? singleEntry.teacher_name : `Sec ${classGroupName(singleEntry.class_group_id)}`}
                               </div>

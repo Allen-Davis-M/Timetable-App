@@ -9,22 +9,33 @@ import TeachersSection from './TeachersSection'
 const SUB_VIEWS = [
   { id: 'subjects', label: 'Subjects' },
   { id: 'teachers', label: 'Teachers' },
+  { id: 'setup', label: 'Setup' },
 ]
 
 /**
- * Data Entry is three separate sub-pages, not one combined table:
+ * Data Entry is four separate sub-pages, not one combined table:
  * Subjects (what the school teaches), Teachers (who teaches, and which
- * subjects they cover), and This section's plan (how many periods/week
- * the *currently selected* section needs of each subject, plus which
- * teacher covers it here). Subjects/Teachers are reached from the
- * sidebar's "Subjects & Teachers" item (school-wide, no section
- * implied); the Plan page is reached by clicking a section in the
- * sidebar directly — it has no sub-nav tab of its own, since "click a
- * section to see its plan" already is the navigation for it, and
- * showing the school-wide Subjects/Teachers tabs while a specific
- * section's plan is open just invited the "why does the sidebar say
- * Section 8-B while I'm looking at every teacher in the school"
- * confusion this split is meant to avoid.
+ * subjects they cover), Setup (periods and rooms — the foundational,
+ * one-time setup a school does before entering subjects/teachers), and
+ * This section's plan (how many periods/week the *currently selected*
+ * section needs of each subject, plus which teacher covers it here).
+ * Subjects/Teachers/Setup are reached from the sidebar's "Subjects &
+ * Teachers" item (school-wide, no section implied); the Plan page is
+ * reached by clicking a section in the sidebar directly — it has no
+ * sub-nav tab of its own, since "click a section to see its plan"
+ * already is the navigation for it, and showing the school-wide
+ * Subjects/Teachers/Setup tabs while a specific section's plan is open
+ * just invited the "why does the sidebar say Section 8-B while I'm
+ * looking at every teacher in the school" confusion this split is meant
+ * to avoid.
+ *
+ * Setup used to be a collapsed "Setup — N periods, N rooms — manage"
+ * disclosure sitting above the Subjects/Teachers sub-nav — easy to miss
+ * entirely for a new admin, since nothing about a plain underlined text
+ * link says "this is where you configure the school's daily schedule."
+ * It's now a full sub-page, a peer of Subjects and Teachers, since
+ * periods/rooms are exactly as much "a point of data entry" as those two
+ * are — a school can't get a working timetable without them.
  *
  * This used to be a single dense table where every row did five things
  * at once — subject name, room type/credits, periods/week, teacher
@@ -61,7 +72,9 @@ export default function DataEntryTab({
   teachers,
   setTeachers,
   periods,
+  setPeriods,
   rooms,
+  setRooms,
   classGroups,
   // Per-section cache of `requirements`, `{ [classGroupId]: requirement[] }`
   // — owned by App.jsx (same reasoning as subjects/teachers/periods/rooms
@@ -80,7 +93,6 @@ export default function DataEntryTab({
 }) {
   const [requirements, setRequirements] = useState([])
   const [activeSectionId, setActiveSectionId] = useState(classGroupId)
-  const [showSetup, setShowSetup] = useState(false)
   const [error, setError] = useState(null)
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([])
   const [copyTargetIds, setCopyTargetIds] = useState([])
@@ -183,13 +195,26 @@ export default function DataEntryTab({
   // need to know about `api` or this component's reload strategy.
   const subjectsApi = {
     async create(data) {
-      // Appended locally instead of a full reload (5 parallel GETs) — a
-      // brand-new subject can't affect periods/rooms/teachers/requirements,
-      // so re-fetching everything here was pure overhead, especially
-      // against a remote database.
-      const created = await api.createSubject(data)
-      setSubjects((prev) => [...prev, created])
-      return created
+      // Shows the new row immediately (before the server round trip
+      // resolves) instead of waiting for it — the round trip itself
+      // (network + remote Postgres) is what was making "+ Add subject"
+      // feel like a 2-3 second freeze even after this was already
+      // reduced to a single call. The temp row is marked `_pending` so
+      // SubjectsSection can disable editing it (and TeachersSection can
+      // exclude it from qualification pickers) until the real subject
+      // with its real id comes back; on failure the temp row is removed
+      // again and the error surfaces as usual.
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+      const optimistic = { ...data, id: tempId, required_room_type: null, credits: null, lab_batch_count: null, _pending: true }
+      setSubjects((prev) => [...prev, optimistic])
+      try {
+        const created = await api.createSubject(data)
+        setSubjects((prev) => prev.map((s) => (s.id === tempId ? created : s)))
+        return created
+      } catch (err) {
+        setSubjects((prev) => prev.filter((s) => s.id !== tempId))
+        throw err
+      }
     },
     async update(id, data) {
       // Patched in place from the server's response instead of a full
@@ -201,16 +226,46 @@ export default function DataEntryTab({
       setSubjects((prev) => prev.map((s) => (s.id === id ? updated : s)))
     },
     async delete(id) {
-      // Left as a full reload, unlike update above: deleting a subject
-      // cascades server-side (removes it from teachers'
-      // qualified_subject_ids and from any section's requirements), and
-      // patching all of *that* fallout locally isn't worth it for an
-      // infrequent admin action — a delete can afford the round trips
-      // that a routine field edit can't.
+      // Removed locally instead of a full reload (5 parallel GETs), same
+      // reasoning as update above. This does leave a removed subject's id
+      // lingering in any teacher's `qualified_subject_ids` in local state
+      // until that teacher is next reloaded — harmless, since nothing
+      // reads a qualification against a subject that's no longer in the
+      // `subjects` list (TeachersSection/PlanSection both filter/map over
+      // `subjects` first), and it self-heals on the next full load.
       await api.deleteSubject(id)
-      await load()
+      setSubjects((prev) => prev.filter((s) => s.id !== id))
     },
     reload: reloadAll,
+  }
+
+  // Handed to PeriodsPanel/RoomsPanel (via SetupSection) so they read/write
+  // App.jsx's lifted `periods`/`rooms` state directly instead of each
+  // independently re-fetching its own list on mount — see PeriodsPanel's
+  // and RoomsPanel's docstrings for why that round trip was the visible
+  // lag on opening Setup.
+  const periodsApi = {
+    async create(data) {
+      const created = await api.createPeriod(data)
+      setPeriods((prev) => [...prev, created])
+      return created
+    },
+    async delete(id) {
+      await api.deletePeriod(id)
+      setPeriods((prev) => prev.filter((p) => p.id !== id))
+    },
+  }
+
+  const roomsApi = {
+    async create(data) {
+      const created = await api.createRoom(data)
+      setRooms((prev) => [...prev, created])
+      return created
+    },
+    async delete(id) {
+      await api.deleteRoom(id)
+      setRooms((prev) => prev.filter((r) => r.id !== id))
+    },
   }
 
   const teachersApi = {
@@ -283,9 +338,23 @@ export default function DataEntryTab({
     }
   }
 
-  const rows = subjects.map((subject) => {
+  // Excludes subjects still `_pending` (optimistically added, not yet
+  // confirmed by the server — see subjectsApi.create above) — setting
+  // periods/week or a preferred teacher here would target the subject's
+  // temporary id instead of its real one.
+  // Used below to also filter by grade — a teacher whose Teacher.
+  // qualified_grades is non-empty should only show up as "qualified" for
+  // sections in one of those grades (empty = no restriction, same as the
+  // solver's own check in app/services/solver.py).
+  const activeSectionGrade = classGroups.find((cg) => cg.id === activeSectionId)?.grade
+
+  const rows = subjects.filter((s) => !s._pending).map((subject) => {
     const requirement = requirements.find((r) => r.subject_id === subject.id)
-    const qualifiedTeachers = teachers.filter((t) => t.qualified_subject_ids.includes(subject.id))
+    const qualifiedTeachers = teachers.filter(
+      (t) =>
+        t.qualified_subject_ids.includes(subject.id) &&
+        (!(t.qualified_grades?.length) || !activeSectionGrade || t.qualified_grades.includes(activeSectionGrade))
+    )
     const periodsPerWeek = requirement?.periods_per_week ?? 0
     return {
       subject,
@@ -355,37 +424,22 @@ export default function DataEntryTab({
             timetable.
           </p>
           {!readOnly && (
-            <button
-              onClick={handleQuickSetupPeriods}
-              disabled={settingUpPeriods}
-              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
-            >
-              {settingUpPeriods ? 'Setting up…' : 'Quick setup: Mon–Fri, 8 periods/day'}
-            </button>
-          )}
-        </div>
-      )}
-
-      <button
-        onClick={() => setShowSetup((v) => !v)}
-        className="w-fit text-xs text-slate-500 underline underline-offset-2"
-      >
-        Setup — {periods.length} period{periods.length === 1 ? '' : 's'}, {rooms.length} room
-        {rooms.length === 1 ? '' : 's'} — {showSetup ? 'hide' : 'manage'}
-      </button>
-      {showSetup && (
-        <div className="divide-y divide-slate-200 rounded-md border border-slate-200">
-          {periods.length > 0 && (
-            <div className="p-4">
-              <PeriodsPanel schoolId={schoolId} />
-            </div>
-          )}
-          <div className="p-4">
-            <RoomsPanel schoolId={schoolId} />
-          </div>
-          {!readOnly && (
-            <div className="p-4">
-              <BulkImportPanel schoolId={schoolId} resource="rooms" onImported={load} />
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleQuickSetupPeriods}
+                disabled={settingUpPeriods}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+              >
+                {settingUpPeriods ? 'Setting up…' : 'Quick setup: Mon–Fri, 8 periods/day'}
+              </button>
+              {subView !== 'setup' && (
+                <button
+                  onClick={() => onSubViewChange('setup')}
+                  className="text-xs font-medium text-amber-800 underline underline-offset-2"
+                >
+                  or set custom period timings in Setup
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -403,7 +457,8 @@ export default function DataEntryTab({
       ) : (
         <nav className="flex gap-1 border-b border-slate-200 text-sm">
           {SUB_VIEWS.map((v) => {
-            const count = v.id === 'subjects' ? subjects.length : teachers.length
+            const count =
+              v.id === 'subjects' ? subjects.length : v.id === 'teachers' ? teachers.length : periods.length
             return (
               <button
                 key={v.id}
@@ -437,7 +492,20 @@ export default function DataEntryTab({
           schoolId={schoolId}
           teachers={teachers}
           subjects={subjects}
+          classGroups={classGroups}
           onTeachersChanged={teachersApi}
+          readOnly={readOnly}
+        />
+      )}
+
+      {subView === 'setup' && (
+        <SetupSection
+          schoolId={schoolId}
+          periods={periods}
+          onPeriodsChanged={periodsApi}
+          rooms={rooms}
+          onRoomsChanged={roomsApi}
+          onImported={load}
           readOnly={readOnly}
         />
       )}
@@ -464,6 +532,59 @@ export default function DataEntryTab({
           readOnly={readOnly}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Periods and rooms — the school's foundational, one-time setup. Used to
+ * live as a collapsed "Setup — manage" text-link disclosure sitting above
+ * the Subjects/Teachers sub-nav, which made it easy for a new admin to
+ * never notice it was there at all. It's a full sub-page now, a peer of
+ * Subjects and Teachers, since it's exactly as much "a point of data
+ * entry" as those two — a school can't get a working timetable without
+ * its periods and rooms configured.
+ */
+function SetupSection({ schoolId, periods, onPeriodsChanged, rooms, onRoomsChanged, onImported, readOnly }) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h4 className="text-base font-medium">Setup</h4>
+        <p className="mt-1 text-sm text-slate-500">
+          Your school's daily schedule (periods) and physical rooms — configure these once, then
+          add subjects and teachers.
+        </p>
+      </div>
+
+      <div className="divide-y divide-slate-200 rounded-md border border-slate-200">
+        <div className="p-4">
+          <h5 className="mb-3 text-sm font-medium text-slate-700">
+            Periods {periods.length > 0 && <span className="text-slate-400">({periods.length})</span>}
+          </h5>
+          <PeriodsPanel
+            schoolId={schoolId}
+            periods={periods}
+            onCreate={onPeriodsChanged.create}
+            onDelete={onPeriodsChanged.delete}
+          />
+        </div>
+        <div className="p-4">
+          <h5 className="mb-3 text-sm font-medium text-slate-700">
+            Rooms {rooms.length > 0 && <span className="text-slate-400">({rooms.length})</span>}
+          </h5>
+          <RoomsPanel
+            schoolId={schoolId}
+            rooms={rooms}
+            onCreate={onRoomsChanged.create}
+            onDelete={onRoomsChanged.delete}
+          />
+        </div>
+        {!readOnly && (
+          <div className="p-4">
+            <BulkImportPanel schoolId={schoolId} resource="rooms" onImported={onImported} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

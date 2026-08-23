@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react'
 
 const COMMON_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F']
-const GRADE_NUMBERS = Array.from({ length: 12 }, (_, i) => i + 1)
+const NUMBERED_GRADES = Array.from({ length: 13 }, (_, i) => String(i + 1))
+// Schools can start as early as KG1/KG2; colleges only use numbered semesters.
+const SCHOOL_GRADE_VALUES = ['KG1', 'KG2', ...NUMBERED_GRADES]
+const COLLEGE_GRADE_VALUES = NUMBERED_GRADES
 
 /**
  * Range-based alternative to adding one grade/section at a time. Defaults
@@ -22,13 +25,23 @@ const GRADE_NUMBERS = Array.from({ length: 12 }, (_, i) => i + 1)
  */
 export default function BulkAddClassGroups({ onAddClassGroups, existing = [], onDone, institutionType }) {
   const defaultPrefix = institutionType === 'college' ? 'Semester' : 'Grade'
+  const gradeValues = institutionType === 'college' ? COLLEGE_GRADE_VALUES : SCHOOL_GRADE_VALUES
   const [advanced, setAdvanced] = useState(false)
 
-  // Simple mode state
-  const [from, setFrom] = useState(1)
-  const [to, setTo] = useState(10)
+  // Simple mode state. From/To are indices into gradeValues rather than raw
+  // numbers, since the list now includes non-numeric entries (KG1/KG2) that
+  // a plain number range can't represent.
+  const [fromIndex, setFromIndex] = useState(() => Math.max(gradeValues.indexOf('1'), 0))
+  const [toIndex, setToIndex] = useState(() => {
+    const idx = gradeValues.indexOf('10')
+    return idx >= 0 ? idx : gradeValues.length - 1
+  })
   const [selectedSections, setSelectedSections] = useState(() => new Set(['A', 'B', 'C']))
   const [customSection, setCustomSection] = useState('')
+  // Extra one-off grades typed in by hand (e.g. "Bridge Course", "LKG"),
+  // added on top of whatever the From/To range covers.
+  const [customGrades, setCustomGrades] = useState(() => new Set())
+  const [customGradeInput, setCustomGradeInput] = useState('')
 
   // Advanced mode state (original free-text form)
   const [prefix, setPrefix] = useState(defaultPrefix)
@@ -41,12 +54,23 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
 
   const simpleSectionsText = [...selectedSections].sort().join(', ')
 
+  // "KG1"/"KG2" are displayed as-is; numbered grades get the Grade/Semester prefix.
+  function gradeLabel(value) {
+    return value === 'KG1' || value === 'KG2' ? value : `${defaultPrefix} ${value}`
+  }
+
+  const rangeGrades = useMemo(() => {
+    const lo = Math.min(fromIndex, toIndex)
+    const hi = Math.max(fromIndex, toIndex)
+    return gradeValues.slice(lo, hi + 1).map(gradeLabel)
+  }, [fromIndex, toIndex, gradeValues, defaultPrefix])
+
   const pairs = useMemo(
     () =>
       advanced
         ? buildPairs(prefix, advFrom, advTo, advSections)
-        : buildPairs(defaultPrefix, String(from), String(to), simpleSectionsText),
-    [advanced, prefix, advFrom, advTo, advSections, defaultPrefix, from, to, simpleSectionsText]
+        : buildPairsFromGrades([...rangeGrades, ...customGrades], simpleSectionsText),
+    [advanced, prefix, advFrom, advTo, advSections, rangeGrades, customGrades, simpleSectionsText]
   )
   const existingKeys = useMemo(
     () => new Set(existing.map((cg) => `${cg.grade || ''}::${cg.name}`)),
@@ -69,6 +93,21 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
     if (!value) return
     setSelectedSections((prev) => new Set(prev).add(value))
     setCustomSection('')
+  }
+
+  function addCustomGrade() {
+    const value = customGradeInput.trim()
+    if (!value) return
+    setCustomGrades((prev) => new Set(prev).add(value))
+    setCustomGradeInput('')
+  }
+
+  function removeCustomGrade(value) {
+    setCustomGrades((prev) => {
+      const next = new Set(prev)
+      next.delete(value)
+      return next
+    })
   }
 
   async function handleSubmit(e) {
@@ -96,13 +135,13 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-slate-500">From {numberLabel}</label>
               <select
-                value={from}
-                onChange={(e) => setFrom(Number(e.target.value))}
+                value={fromIndex}
+                onChange={(e) => setFromIndex(Number(e.target.value))}
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
               >
-                {GRADE_NUMBERS.map((n) => (
-                  <option key={n} value={n}>
-                    {defaultPrefix} {n}
+                {gradeValues.map((v, idx) => (
+                  <option key={v} value={idx}>
+                    {gradeLabel(v)}
                   </option>
                 ))}
               </select>
@@ -110,16 +149,53 @@ export default function BulkAddClassGroups({ onAddClassGroups, existing = [], on
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-slate-500">To {numberLabel}</label>
               <select
-                value={to}
-                onChange={(e) => setTo(Number(e.target.value))}
+                value={toIndex}
+                onChange={(e) => setToIndex(Number(e.target.value))}
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
               >
-                {GRADE_NUMBERS.map((n) => (
-                  <option key={n} value={n}>
-                    {defaultPrefix} {n}
+                {gradeValues.map((v, idx) => (
+                  <option key={v} value={idx}>
+                    {gradeLabel(v)}
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">
+              Add a custom {numberLabel} (optional)
+            </label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[...customGrades].map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => removeCustomGrade(g)}
+                  className="h-8 rounded-md bg-indigo-600 px-2.5 text-sm font-medium text-white"
+                >
+                  {g} ×
+                </button>
+              ))}
+              <input
+                value={customGradeInput}
+                onChange={(e) => setCustomGradeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addCustomGrade()
+                  }
+                }}
+                placeholder="e.g. Bridge Course"
+                className="h-8 w-36 rounded-md border border-slate-300 px-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={addCustomGrade}
+                className="h-8 rounded-md border border-slate-300 px-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Add
+              </button>
             </div>
           </div>
 
@@ -271,6 +347,24 @@ function expandSections(text) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+/**
+ * Simple-mode pair builder: takes an already-resolved list of grade labels
+ * (e.g. ['KG1', 'KG2', 'Grade 1', ..., 'Grade 13'], possibly with custom
+ * ones appended) rather than a numeric from/to range, since KG1/KG2 and
+ * free-typed custom grades aren't expressible as "prefix + number".
+ */
+function buildPairsFromGrades(gradeLabels, sectionsText) {
+  const sectionList = expandSections(sectionsText)
+  if (gradeLabels.length === 0 || sectionList.length === 0) return []
+  const pairs = []
+  for (const grade of gradeLabels) {
+    for (const section of sectionList) {
+      pairs.push({ grade, name: section })
+    }
+  }
+  return pairs
 }
 
 function buildPairs(prefix, fromStr, toStr, sectionsText) {

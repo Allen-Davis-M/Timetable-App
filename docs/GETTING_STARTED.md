@@ -12,8 +12,10 @@
 The database schema changed (added `users`, `schools.owner_id`,
 `class_groups.grade`, `timetables.solver_status` / `timetables.error_message`
 for the async generation job, `timetable_entries.room_id` for room
-assignment, and — most recently — `subjects.required_room_type`, used to
-match a subject to a room when the solver assigns rooms).
+assignment, `subjects.required_room_type`, used to match a subject to a
+room when the solver assigns rooms, and — most recently —
+`teachers.qualified_grades`, used to restrict a teacher to specific grades
+instead of every grade in the school).
 SQLite's auto-create-on-startup only creates
 *missing* tables — it won't add new columns to ones that already exist. If
 you already have a `backend/dev.db` from before, **delete it** before
@@ -26,6 +28,24 @@ rm backend/dev.db   # Windows: del backend\dev.db
 It'll be recreated fresh (empty) on the next `uvicorn` start. This is a
 one-time thing — once you're on the current schema, normal restarts are
 fine.
+
+### If you're running against a real (non-SQLite) database
+
+The same "only creates missing tables" limitation applies to Postgres —
+`Base.metadata.create_all` will not add `teachers.qualified_grades` to an
+existing `teachers` table. Run this once against your production database
+before deploying this change:
+
+```sql
+ALTER TABLE teachers ADD COLUMN qualified_grades JSON DEFAULT '[]'::json;
+```
+
+Postgres 11+ backfills existing rows with the default as part of this
+single statement, so every existing teacher ends up with `[]`
+(no restriction — they keep teaching every grade they did before), not
+`NULL`. There's no data loss risk either way: the API tolerates `NULL`
+here (see `TeacherOut.qualified_grades` in `app/schemas/teacher.py`) and
+treats it the same as `[]`.
 
 ## 1. Backend
 
