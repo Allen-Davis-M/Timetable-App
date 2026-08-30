@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import BulkAddClassGroups from './BulkAddClassGroups'
 
@@ -99,6 +99,23 @@ export default function Sidebar({
   // different grade are the same "correct this section" action to an
   // admin, not two separate features.
   const [editingSectionId, setEditingSectionId] = useState(null)
+  // Optimistic override for gradeOrder, used only while a reorder is
+  // in flight. Without this, every up/down click waited on a full
+  // round trip to the server (through Railway, then Supabase) before
+  // the arrows visually moved anything — on a slow connection that
+  // looked like nothing happened, and clicking again before the first
+  // request resolved computed the next swap from the same stale
+  // pre-move order both times, so rapid clicks could silently no-op or
+  // even race each other's saves. Set immediately on click; cleared
+  // once the confirmed `gradeOrder` prop catches up (see the effect
+  // below), so the prop is the source of truth again as soon as it can be.
+  const [localGradeOrder, setLocalGradeOrder] = useState(null)
+
+  useEffect(() => {
+    setLocalGradeOrder(null)
+  }, [gradeOrder])
+
+  const effectiveGradeOrder = localGradeOrder ?? gradeOrder
 
   const grades = useMemo(() => {
     const map = new Map()
@@ -107,9 +124,9 @@ export default function Sidebar({
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(cg)
     }
-    const sortedKeys = sortGradeKeys([...map.keys()], gradeOrder)
+    const sortedKeys = sortGradeKeys([...map.keys()], effectiveGradeOrder)
     return sortedKeys.map((key) => [key, map.get(key)])
-  }, [classGroups, gradeOrder])
+  }, [classGroups, effectiveGradeOrder])
 
   // "Ungrouped" is pinned last by sortGradeKeys and isn't a real grade, so
   // it's excluded here — it can't be moved, and there's no reason to
@@ -122,7 +139,13 @@ export default function Sidebar({
     if (idx === -1 || swapIdx < 0 || swapIdx >= orderableGradeKeys.length) return
     const next = [...orderableGradeKeys]
     ;[next[idx], next[swapIdx]] = [next[swapIdx], next[idx]]
+    setLocalGradeOrder(next) // instant, so the next click (if any) builds on this, not stale state
     onReorderGrades(next)
+  }
+
+  function resetGradeOrder() {
+    setLocalGradeOrder([])
+    onReorderGrades([])
   }
 
   function toggle(grade) {
@@ -194,6 +217,15 @@ export default function Sidebar({
           Grades &amp; sections
         </span>
         <div className="flex items-center gap-2.5">
+          {reorderMode && onReorderGrades && (
+            <button
+              onClick={resetGradeOrder}
+              className="text-xs text-slate-400 hover:text-slate-700"
+              title="Clear the custom order and go back to automatic sorting"
+            >
+              Auto-sort
+            </button>
+          )}
           {!readOnly && onReorderGrades && orderableGradeKeys.length > 1 && (
             <button
               onClick={() => setReorderMode((v) => !v)}
