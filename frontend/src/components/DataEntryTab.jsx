@@ -766,8 +766,8 @@ function PlanSection({
             </th>
             <th className="w-1/3 py-2 font-medium">Subject</th>
             <th className="w-32 py-2 font-medium">Periods/week</th>
-            <th className="py-2 font-medium">Assistant teacher</th>
             <th className="py-2 font-medium">Teacher</th>
+            <th className="py-2 font-medium">Assistant teacher</th>
             <th className="w-28 py-2 font-medium">Status</th>
           </tr>
         </thead>
@@ -791,28 +791,6 @@ function PlanSection({
                 />
               </td>
               <td className="py-2 pr-2">
-                {assistantEligibleTeachers.length === 0 ? (
-                  <span className="text-xs text-slate-400">No eligible teachers</span>
-                ) : (
-                  <select
-                    value={assistantTeacherId ?? ''}
-                    disabled={readOnly || periodsPerWeek <= 0}
-                    onChange={(e) =>
-                      onSetAssistantTeacher(subject.id, e.target.value ? Number(e.target.value) : null)
-                    }
-                    title="An optional second teacher for this subject in this section — mark a teacher 'eligible as an assistant teacher' on the Teachers page to add them here"
-                    className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600 hover:bg-slate-100"
-                  >
-                    <option value="">None</option>
-                    {assistantEligibleTeachers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </td>
-              <td className="py-2 pr-2">
                 {qualifiedTeachers.length === 0 ? (
                   <span className="text-xs text-slate-400">No qualified teacher yet</span>
                 ) : qualifiedTeachers.length === 1 ? (
@@ -829,6 +807,28 @@ function PlanSection({
                   >
                     <option value="">Any (let solver choose)</option>
                     {qualifiedTeachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </td>
+              <td className="py-2 pr-2">
+                {assistantEligibleTeachers.length === 0 ? (
+                  <span className="text-xs text-slate-400">No eligible teachers</span>
+                ) : (
+                  <select
+                    value={assistantTeacherId ?? ''}
+                    disabled={readOnly || periodsPerWeek <= 0}
+                    onChange={(e) =>
+                      onSetAssistantTeacher(subject.id, e.target.value ? Number(e.target.value) : null)
+                    }
+                    title="An optional second teacher for this subject in this section — mark a teacher 'eligible as an assistant teacher' on the Teachers page to add them here"
+                    className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600 hover:bg-slate-100"
+                  >
+                    <option value="">None</option>
+                    {assistantEligibleTeachers.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
                       </option>
