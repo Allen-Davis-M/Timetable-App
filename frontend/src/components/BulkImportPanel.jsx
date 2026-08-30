@@ -63,13 +63,28 @@ export default function BulkImportPanel({ schoolId, onImported, resource }) {
       </p>
 
       <form onSubmit={handleUpload} className="mt-3 flex flex-wrap items-center gap-2">
+        {/* The native file input renders as plain text in some browsers,
+            not obviously clickable next to the "Import" button — hidden
+            (not removed, still what actually opens the file dialog and
+            holds the value) in favor of a label styled to look like the
+            other secondary buttons on this page. */}
         <input
           type="file"
+          id={`bulk-import-file-${resource}`}
           accept=".csv,.xlsx"
           disabled={uploading}
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="text-sm"
+          className="sr-only"
         />
+        <label
+          htmlFor={`bulk-import-file-${resource}`}
+          className={`rounded-md border border-slate-300 px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 ${
+            uploading ? 'pointer-events-none opacity-50' : 'cursor-pointer'
+          }`}
+        >
+          Choose file
+        </label>
+        {file && <span className="max-w-[200px] truncate text-sm text-slate-500">{file.name}</span>}
         <button
           disabled={!file || uploading}
           className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"

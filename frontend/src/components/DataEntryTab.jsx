@@ -314,6 +314,34 @@ export default function DataEntryTab({
     }
   }
 
+  // Adds or removes this subject from the active section's plan — the
+  // subject picker's checkbox toggle. Adding creates a requirement row
+  // with a placeholder periods_per_week (1) the admin then fills in for
+  // real in the table; removing deletes the row outright, same as
+  // setting periods/week back to 0 in the table already does (this is
+  // just a more discoverable way to do the same thing, plus it's how a
+  // subject gets added in the first place now — the table no longer
+  // shows every school subject to type a number into).
+  async function handleToggleSectionSubject(subjectId, shouldSelect) {
+    try {
+      if (shouldSelect) {
+        const created = await api.createRequirement(activeSectionId, {
+          class_group_id: activeSectionId,
+          subject_id: subjectId,
+          periods_per_week: 1,
+        })
+        setAllRequirements((prev) => [...prev, created])
+      } else {
+        const existing = requirements.find((r) => r.subject_id === subjectId)
+        if (!existing) return
+        await api.deleteRequirement(existing.id)
+        setAllRequirements((prev) => prev.filter((r) => r.id !== existing.id))
+      }
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   // Excludes subjects still `_pending` (optimistically added, not yet
   // confirmed by the server — see subjectsApi.create above) — setting
   // periods/week or a preferred teacher here would target the subject's
@@ -331,7 +359,16 @@ export default function DataEntryTab({
   // teach the subject solo.
   const assistantEligibleTeachers = teachers.filter((t) => t.is_assistant_eligible)
 
-  const rows = subjects.filter((s) => !s._pending).map((subject) => {
+  // Only subjects this section has actually been given a requirement
+  // row for — i.e. ones an admin picked via the subject picker below —
+  // not every subject in the school. A school with 20 subjects but one
+  // section (say, Kindergarten) that only needs 6 of them shouldn't show
+  // the other 14 as rows to skip past every time this page opens.
+  const sectionSubjects = subjects.filter(
+    (s) => !s._pending && requirements.some((r) => r.subject_id === s.id)
+  )
+
+  const rows = sectionSubjects.map((subject) => {
     const requirement = requirements.find((r) => r.subject_id === subject.id)
     const qualifiedTeachers = teachers.filter(
       (t) =>
@@ -498,6 +535,8 @@ export default function DataEntryTab({
       {subView === 'plan' && (
         <PlanSection
           rows={rows}
+          subjects={subjects}
+          onToggleSectionSubject={handleToggleSectionSubject}
           classGroups={classGroups}
           otherSections={otherSections}
           activeSectionId={activeSectionId}
@@ -585,6 +624,8 @@ function SetupSection({ schoolId, periods, onPeriodsChanged, rooms, onRoomsChang
  */
 function PlanSection({
   rows,
+  subjects,
+  onToggleSectionSubject,
   classGroups,
   otherSections,
   activeSectionId,
@@ -605,6 +646,12 @@ function PlanSection({
   onGoToSubjects,
   readOnly,
 }) {
+  // Whether the subject picker (below) is showing instead of the periods/
+  // week table — forced open automatically whenever this section has no
+  // subjects picked yet (`rows.length === 0`), and toggleable afterward
+  // via "Edit subjects" so an admin can add/remove ones later without
+  // that always being the first thing this page shows.
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false)
   const totalWeeklyPeriods = rows.reduce((sum, row) => sum + row.periodsPerWeek, 0)
   const selectedAll = selectedSubjectIds.length === rows.length && rows.length > 0
   const selectedCount = selectedSubjectIds.length
@@ -632,7 +679,9 @@ function PlanSection({
     )
   }
 
-  if (rows.length === 0) {
+  const availableSubjects = subjects.filter((s) => !s._pending)
+
+  if (availableSubjects.length === 0) {
     return (
       <div className="rounded-md border border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
         <p className="mb-2">No subjects yet — add some on the Subjects page first.</p>
@@ -646,13 +695,49 @@ function PlanSection({
     )
   }
 
+  // Shown instead of the periods/week table either the first time this
+  // section has no subjects picked yet, or when "Edit subjects" below
+  // reopens it on purpose.
+  if (rows.length === 0 || subjectPickerOpen) {
+    return (
+      <div className="flex flex-col gap-5">
+        <div>
+          <h4 className="text-base font-medium">This section's plan</h4>
+          <p className="mt-1 text-sm text-slate-500">
+            {rows.length === 0
+              ? "First, pick which subjects this section needs — only these show up below, not every subject in the school."
+              : 'Add or remove subjects for this section.'}
+          </p>
+        </div>
+        <SectionSubjectPicker
+          subjects={availableSubjects}
+          selectedSubjectIds={rows.map((row) => row.subject.id)}
+          onToggleSubject={onToggleSectionSubject}
+          onDone={() => setSubjectPickerOpen(false)}
+          canFinish={rows.length > 0}
+          readOnly={readOnly}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <h4 className="text-base font-medium">This section's plan</h4>
-        <p className="mt-1 text-sm text-slate-500">
-          How many periods/week this section needs of each subject, and who teaches it here.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-base font-medium">This section's plan</h4>
+          <p className="mt-1 text-sm text-slate-500">
+            How many periods/week this section needs of each subject, and who teaches it here.
+          </p>
+        </div>
+        {!readOnly && (
+          <button
+            onClick={() => setSubjectPickerOpen(true)}
+            className="flex-none rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Edit subjects
+          </button>
+        )}
       </div>
 
       <div className="rounded-md border border-indigo-200 bg-indigo-50/60 p-4 text-sm text-slate-600">
@@ -822,6 +907,49 @@ function PlanSection({
           </tr>
         </tbody>
       </table>
+    </div>
+  )
+}
+
+/**
+ * Checkbox list of the school's subjects for picking which ones apply to
+ * one section — shown full-page the first time a section has none picked
+ * yet, and re-openable afterward via "Edit subjects" in PlanSection to
+ * add/remove. Checking a box creates that subject's requirement row
+ * (periods_per_week starts at a placeholder 1, filled in for real in the
+ * table); unchecking deletes it — same underlying operation as setting
+ * periods/week back to 0 in the table, just a more discoverable way in.
+ */
+function SectionSubjectPicker({ subjects, selectedSubjectIds, onToggleSubject, onDone, canFinish, readOnly }) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-4">
+      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 md:grid-cols-3">
+        {subjects.map((s) => (
+          <label
+            key={s.id}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+          >
+            <input
+              type="checkbox"
+              checked={selectedSubjectIds.includes(s.id)}
+              disabled={readOnly}
+              onChange={(e) => onToggleSubject(s.id, e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+            />
+            {s.name}
+          </label>
+        ))}
+      </div>
+      {canFinish && (
+        <div className="mt-4 flex justify-end border-t border-slate-100 pt-3">
+          <button
+            onClick={onDone}
+            className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Continue to periods/week →
+          </button>
+        </div>
+      )}
     </div>
   )
 }
