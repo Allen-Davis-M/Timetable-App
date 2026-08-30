@@ -28,6 +28,15 @@ class School(Base):
     # existing row with this left null is treated as "school" everywhere
     # that reads it, not an error state.
     institution_type = Column(String, nullable=True)
+    # Explicit display order for the sidebar's grade groups, as a list of
+    # grade label strings (e.g. ["Nursery", "LKG", "UKG", "Grade 1", ...]).
+    # Empty by default — the sidebar falls back to a natural (numeric-
+    # aware) sort until an admin explicitly reorders grades (see
+    # PUT /api/schools/{id}/grade-order), since most schools' grade names
+    # sort correctly on their own and shouldn't require manual setup.
+    # Grades not present in this list (e.g. a brand-new one added after
+    # the last reorder) are shown after every listed grade.
+    grade_order = Column(JSON, default=list)
 
     owner = relationship("User", back_populates="schools")
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")

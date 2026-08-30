@@ -19,9 +19,17 @@ class SchoolOut(BaseModel):
     id: int
     name: str
     institution_type: str | None = None
+    # `| None` purely to tolerate rows from before this column existed,
+    # same reasoning as Teacher.qualified_grades — the frontend already
+    # treats a missing/None value the same as an empty list.
+    grade_order: list[str] | None = None
     # The current user's role for THIS school specifically ("admin" or
     # "viewer") — not a column on the School model, computed per-request
     # by whichever router endpoint builds this (see app/core/access.py).
     # Lets the frontend gate write UI (hide "Add", "Generate", etc. for a
     # viewer) without a separate round-trip to find out.
     role: str = "admin"
+
+
+class SchoolGradeOrderUpdate(BaseModel):
+    grade_order: list[str]

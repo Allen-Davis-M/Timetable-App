@@ -361,6 +361,20 @@ function App() {
     }
   }
 
+  // Persists the sidebar's admin-customized grade order — see
+  // School.grade_order's docstring on the backend. Updates `schools`
+  // locally from the response instead of a full loadSchoolData() reload,
+  // since reordering grades can't have changed anything else.
+  async function handleReorderGrades(newOrder) {
+    try {
+      const updated = await api.updateSchoolGradeOrder(selectedSchoolId, newOrder)
+      setSchools((prev) => prev.map((s) => (s.id === selectedSchoolId ? updated : s)))
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   async function handleDeleteClassGroup(classGroup) {
     const label = classGroup.grade ? `${classGroup.grade} - ${classGroup.name}` : classGroup.name
     if (
@@ -508,6 +522,8 @@ function App() {
           onDeleteClassGroup={handleDeleteClassGroup}
           onUpdateClassGroup={handleUpdateClassGroup}
           onRenameGrade={handleRenameGrade}
+          gradeOrder={selectedSchool?.grade_order}
+          onReorderGrades={handleReorderGrades}
           onGoToSchoolSetup={() => {
             setTab('entry')
             setDataEntrySubView('subjects')

@@ -25,7 +25,7 @@ from app.core.database import get_db
 from app.models.school import School, SchoolInvite, SchoolMembership
 from app.models.user import User
 from app.schemas.membership import InviteCreate, InviteOut, MemberOut, MemberRoleUpdate
-from app.schemas.school import SchoolCreate, SchoolOut
+from app.schemas.school import SchoolCreate, SchoolGradeOrderUpdate, SchoolOut
 
 router = APIRouter(prefix="/api/schools", tags=["schools"])
 
@@ -40,7 +40,10 @@ def create_school(
     db.add(school)
     db.commit()
     db.refresh(school)
-    return SchoolOut(id=school.id, name=school.name, institution_type=school.institution_type, role="admin")
+    return SchoolOut(
+        id=school.id, name=school.name, institution_type=school.institution_type,
+        grade_order=school.grade_order, role="admin",
+    )
 
 
 @router.get("", response_model=list[SchoolOut])
@@ -64,6 +67,7 @@ def list_schools(
             id=s.id,
             name=s.name,
             institution_type=s.institution_type,
+            grade_order=s.grade_order,
             role=get_membership_role(db, current_user, s.id) or "viewer",
         )
         for s in by_id.values()
@@ -78,7 +82,31 @@ def get_school(
 ):
     role = require_school_access(db, current_user, school_id)
     school = db.get(School, school_id)
-    return SchoolOut(id=school.id, name=school.name, institution_type=school.institution_type, role=role)
+    return SchoolOut(
+        id=school.id, name=school.name, institution_type=school.institution_type,
+        grade_order=school.grade_order, role=role,
+    )
+
+
+@router.put("/{school_id}/grade-order", response_model=SchoolOut)
+def update_grade_order(
+    school_id: int, payload: SchoolGradeOrderUpdate,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Persists the sidebar's admin-customized grade display order — see
+    School.grade_order's docstring. Full-replace (not a patch/reorder-one
+    operation): the frontend always sends the complete new ordering, since
+    that's simpler and less error-prone than the server reasoning about a
+    partial move."""
+    role = require_school_access(db, current_user, school_id, min_role="admin")
+    school = db.get(School, school_id)
+    school.grade_order = payload.grade_order
+    db.commit()
+    db.refresh(school)
+    return SchoolOut(
+        id=school.id, name=school.name, institution_type=school.institution_type,
+        grade_order=school.grade_order, role=role,
+    )
 
 
 @router.get("/{school_id}/members", response_model=list[MemberOut])

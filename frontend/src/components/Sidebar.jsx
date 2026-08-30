@@ -2,6 +2,47 @@ import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import BulkAddClassGroups from './BulkAddClassGroups'
 
+// Numeric-aware comparison so "Grade 2" sorts before "Grade 10" — a plain
+// string sort would put "Grade 10" right after "Grade 1", ahead of every
+// other single-digit grade. Falls back to a plain locale compare for
+// non-numeric labels (e.g. "Nursery", "LKG") where there's no number to
+// anchor on.
+function naturalGradeCompare(a, b) {
+  const numA = a.match(/\d+/)
+  const numB = b.match(/\d+/)
+  if (numA && numB) {
+    const diff = Number(numA[0]) - Number(numB[0])
+    if (diff !== 0) return diff
+  }
+  return a.localeCompare(b)
+}
+
+// Sorts grade keys by the school's explicit `gradeOrder` (admin-set via
+// the Reorder mode below) when one exists, falling back to the natural
+// sort above for any grade not yet in that list — a school that's never
+// touched reordering gets a sensibly-ordered sidebar for free, and a
+// brand-new grade added after the last reorder still shows up (at the
+// end) instead of silently disappearing from the list. "Ungrouped"
+// (sections with no grade set) always sorts last — it's not a real grade,
+// just where sections with none land.
+function sortGradeKeys(keys, gradeOrder) {
+  const order = gradeOrder && gradeOrder.length > 0 ? gradeOrder : null
+  return [...keys].sort((a, b) => {
+    if (a === 'Ungrouped' || b === 'Ungrouped') {
+      if (a === b) return 0
+      return a === 'Ungrouped' ? 1 : -1
+    }
+    if (order) {
+      const ia = order.indexOf(a)
+      const ib = order.indexOf(b)
+      const ra = ia === -1 ? order.length : ia
+      const rb = ib === -1 ? order.length : ib
+      if (ra !== rb) return ra - rb
+    }
+    return naturalGradeCompare(a, b)
+  })
+}
+
 /**
  * Left nav: school branding + switcher, then a Grade > Section tree built
  * from class groups grouped by their `grade` field. Ungrouped class groups
@@ -33,6 +74,8 @@ export default function Sidebar({
   onDeleteClassGroup,
   onUpdateClassGroup,
   onRenameGrade,
+  gradeOrder,
+  onReorderGrades,
   onGoToSchoolSetup,
   schoolSetupActive = false,
   readOnly = false,
@@ -45,6 +88,11 @@ export default function Sidebar({
   const [submittingSection, setSubmittingSection] = useState(false)
   // Which grade heading is currently being renamed (grade key, or null).
   const [editingGrade, setEditingGrade] = useState(null)
+  // Swaps the rename pencil for up/down arrows on every grade heading —
+  // a toggle rather than always-visible arrows, since most admins only
+  // need this once (right after adding grades out of order) and constant
+  // arrows next to every heading would be visual noise the rest of the time.
+  const [reorderMode, setReorderMode] = useState(false)
   // Which section is currently being edited (class group id, or null) —
   // edit mode swaps the row for a small grade+name form instead of a
   // single text field, since fixing a typo and moving a section to a
@@ -59,8 +107,23 @@ export default function Sidebar({
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(cg)
     }
-    return Array.from(map.entries())
-  }, [classGroups])
+    const sortedKeys = sortGradeKeys([...map.keys()], gradeOrder)
+    return sortedKeys.map((key) => [key, map.get(key)])
+  }, [classGroups, gradeOrder])
+
+  // "Ungrouped" is pinned last by sortGradeKeys and isn't a real grade, so
+  // it's excluded here — it can't be moved, and there's no reason to
+  // persist it in the school's saved gradeOrder.
+  const orderableGradeKeys = grades.map(([g]) => g).filter((g) => g !== 'Ungrouped')
+
+  function moveGrade(grade, direction) {
+    const idx = orderableGradeKeys.indexOf(grade)
+    const swapIdx = idx + direction
+    if (idx === -1 || swapIdx < 0 || swapIdx >= orderableGradeKeys.length) return
+    const next = [...orderableGradeKeys]
+    ;[next[idx], next[swapIdx]] = [next[swapIdx], next[idx]]
+    onReorderGrades(next)
+  }
 
   function toggle(grade) {
     setExpanded((prev) => ({ ...prev, [grade]: !prev[grade] }))
@@ -130,15 +193,26 @@ export default function Sidebar({
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
           Grades &amp; sections
         </span>
-        {!readOnly && (
-          <button
-            onClick={() => setAddingGrade((v) => !v)}
-            className="text-xs text-slate-400 hover:text-slate-700"
-            title="Add grade / section"
-          >
-            + Add
-          </button>
-        )}
+        <div className="flex items-center gap-2.5">
+          {!readOnly && onReorderGrades && orderableGradeKeys.length > 1 && (
+            <button
+              onClick={() => setReorderMode((v) => !v)}
+              className={`text-xs ${reorderMode ? 'font-medium text-indigo-600' : 'text-slate-400 hover:text-slate-700'}`}
+              title="Reorder grades"
+            >
+              {reorderMode ? 'Done' : 'Reorder'}
+            </button>
+          )}
+          {!readOnly && (
+            <button
+              onClick={() => setAddingGrade((v) => !v)}
+              className="text-xs text-slate-400 hover:text-slate-700"
+              title="Add grade / section"
+            >
+              + Add
+            </button>
+          )}
+        </div>
       </div>
 
       <AnimatePresence initial={false}>
@@ -249,18 +323,48 @@ export default function Sidebar({
                   </svg>
                 </span>
                 <span className="flex-1">{grade}</span>
-                {!readOnly && onRenameGrade && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditingGrade(grade)
-                    }}
-                    title={`Rename "${grade}" (applies to all its sections)`}
-                    aria-label={`Rename ${grade}`}
-                    className="opacity-0 text-slate-300 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
-                  >
-                    ✎
-                  </button>
+                {reorderMode && grade !== 'Ungrouped' ? (
+                  <span className="flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        moveGrade(grade, -1)
+                      }}
+                      disabled={orderableGradeKeys.indexOf(grade) === 0}
+                      title={`Move "${grade}" up`}
+                      aria-label={`Move ${grade} up`}
+                      className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        moveGrade(grade, 1)
+                      }}
+                      disabled={orderableGradeKeys.indexOf(grade) === orderableGradeKeys.length - 1}
+                      title={`Move "${grade}" down`}
+                      aria-label={`Move ${grade} down`}
+                      className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400"
+                    >
+                      ▼
+                    </button>
+                  </span>
+                ) : (
+                  !readOnly &&
+                  onRenameGrade && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEditingGrade(grade)
+                      }}
+                      title={`Rename "${grade}" (applies to all its sections)`}
+                      aria-label={`Rename ${grade}`}
+                      className="opacity-0 text-slate-300 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
+                    >
+                      ✎
+                    </button>
+                  )
                 )}
               </div>
             )}

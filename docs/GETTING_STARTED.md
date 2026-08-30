@@ -55,6 +55,7 @@ Same deal for the assistant-teacher fields:
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS is_assistant_eligible BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE subject_requirements ADD COLUMN IF NOT EXISTS assistant_teacher_id INTEGER REFERENCES teachers(id);
 ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS assistant_teacher_id INTEGER REFERENCES teachers(id);
+ALTER TABLE schools ADD COLUMN IF NOT EXISTS grade_order JSON DEFAULT '[]'::json;
 ```
 
 Every existing teacher backfills to `is_assistant_eligible = false` (not

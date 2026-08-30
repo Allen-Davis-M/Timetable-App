@@ -122,6 +122,8 @@ export const api = {
   // Schools
   listSchools: () => get("/schools"),
   createSchool: (data) => post("/schools", data),
+  updateSchoolGradeOrder: (schoolId, gradeOrder) =>
+    put(`/schools/${schoolId}/grade-order`, { grade_order: gradeOrder }),
 
   // Subjects
   listSubjects: (schoolId) => get(`/subjects?school_id=${schoolId}`),
