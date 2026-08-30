@@ -1,6 +1,3 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
-
 /**
  * The six-step journey from a brand-new section to a generated timetable
  * (periods -> subjects -> teachers -> this section's plan -> constraints
@@ -35,44 +32,24 @@ export function useSetupProgress({
   teachers = [],
   constraints = [],
   hasTimetable = false,
-  // Same idea for the per-section `requirements` count — reuses
-  // DataEntryTab's own cache (also lifted to App.jsx) instead of a third
-  // independent fetch of the same section's data.
-  requirementsCache = {},
-  setRequirementsCache,
+  // Every SubjectRequirement in the school — App.jsx's own state now,
+  // always fully loaded (see App.jsx's docstring on why the old per-
+  // section lazy cache had to go: TeachersSection's live workload total
+  // needs every section's data at once, not just whichever ones happen
+  // to have been visited). This section's own count is just a filter
+  // over it, not a separate fetch.
+  allRequirements = [],
 }) {
   const loaded = Boolean(schoolId)
-  // Only the per-section requirements fetch below can still fail here —
-  // everything else this hook reports is passed-in state, not something
-  // it fetches itself, so there's nothing else for this to catch.
-  const [loadError, setLoadError] = useState(null)
+  // Nothing left for this hook to fetch itself — every count it reports
+  // is derived from already-loaded state passed in, so there's nothing
+  // that can fail here anymore. Kept in the return value (always null)
+  // so OverviewTab/SetupProgressBar don't need to change how they read it.
+  const loadError = null
 
-  // Cache-aware, same pattern as DataEntryTab.jsx's own loadRequirements:
-  // a section already visited in Data Entry is already in the shared
-  // cache, so this resolves with no network call at all; a section this
-  // admin hasn't opened yet gets fetched once and the result is written
-  // back into the *shared* cache, so DataEntryTab benefits too if they
-  // visit it next.
-  const requirementsCount = (classGroupId && requirementsCache[classGroupId]?.length) || 0
-  useEffect(() => {
-    if (!schoolId || !classGroupId || requirementsCache[classGroupId]) return
-    let cancelled = false
-
-    async function loadRequirements() {
-      try {
-        const requirements = await api.listRequirements(classGroupId)
-        if (cancelled) return
-        setRequirementsCache((prev) => ({ ...prev, [classGroupId]: requirements }))
-      } catch (err) {
-        if (!cancelled) setLoadError(err.message)
-      }
-    }
-    loadRequirements()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, classGroupId, requirementsCache])
+  const requirementsCount = classGroupId
+    ? allRequirements.filter((r) => r.class_group_id === classGroupId).length
+    : 0
 
   const steps = [
     {

@@ -76,22 +76,22 @@ export default function DataEntryTab({
   rooms,
   setRooms,
   classGroups,
-  // Per-section cache of `requirements`, `{ [classGroupId]: requirement[] }`
-  // — owned by App.jsx (same reasoning as subjects/teachers/periods/rooms
-  // above: this component unmounts on every tab switch, so a cache kept
-  // locally here would be destroyed right along with it). Kept correct by
-  // every write path below either patching the active section's entry
-  // directly (routine edits) or `load()` clearing the whole cache
-  // (anything that could touch a *different* section's requirements, e.g.
-  // deleting a subject/teacher, or copying periods into other sections).
-  requirementsCache,
-  setRequirementsCache,
+  // Every SubjectRequirement in the school, owned by App.jsx (same
+  // reasoning as subjects/teachers/periods/rooms above — this component
+  // unmounts on every tab switch, so state kept locally here would be
+  // destroyed right along with it). This section's own `requirements` is
+  // just a filtered view of it, not separately fetched/cached, since
+  // App.jsx already loads the whole list up front (TeachersSection needs
+  // every section's data at once for its live workload total, so a lazy
+  // per-visited-section cache — which is what this used to be — isn't an
+  // option anymore anyway).
+  allRequirements,
+  setAllRequirements,
   onReloadSchoolData,
   readOnly = false,
   subView,
   onSubViewChange,
 }) {
-  const [requirements, setRequirements] = useState([])
   const [activeSectionId, setActiveSectionId] = useState(classGroupId)
   const [error, setError] = useState(null)
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([])
@@ -100,51 +100,17 @@ export default function DataEntryTab({
   const [copyingPeriods, setCopyingPeriods] = useState(false)
   const [settingUpPeriods, setSettingUpPeriods] = useState(false)
 
-  // `force` bypasses the cache — used by `load()` below for the paths
-  // that need a guaranteed-fresh fetch, since a cache hit there would
-  // silently keep serving stale data forever.
-  async function loadRequirements(sectionId, { force = false } = {}) {
-    if (!sectionId) {
-      setRequirements([])
-      return
-    }
-    if (!force && requirementsCache[sectionId]) {
-      setRequirements(requirementsCache[sectionId])
-      return
-    }
-    try {
-      const r = await api.listRequirements(sectionId)
-      setRequirements(r)
-      setRequirementsCache((prev) => ({ ...prev, [sectionId]: r }))
-      setError(null)
-    } catch (err) {
-      setError(err.message)
-    }
-  }
+  const requirements = allRequirements.filter((r) => r.class_group_id === activeSectionId)
 
-  // Patches both the displayed `requirements` and its cache entry for the
-  // active section in one step — every routine edit below (periods/week,
-  // preferred teacher) goes through this instead of a full reload.
-  function applyRequirements(next) {
-    setRequirements(next)
-    setRequirementsCache((prev) => ({ ...prev, [activeSectionId]: next }))
-  }
-
-  // Full refresh of everything — kept for the less-frequent call sites
-  // (bulk import, quick period setup, a delete that could have cascaded
-  // into the current section's plan, or copying periods into other
-  // sections) where re-fetching all of it is the simplest correct thing
-  // to do and isn't the hot path. Clears the whole per-section cache
-  // rather than just the active section's entry, since these are exactly
-  // the actions that can invalidate *other* sections' requirements too
-  // (e.g. deleting a subject removes it from every section that had it,
-  // and "copy to other sections" writes directly into sections that may
-  // already be cached with a now-stale snapshot). The school-wide half of
-  // this (subjects/teachers/periods/rooms/classGroups) is now App.jsx's
-  // job — `onReloadSchoolData` is its loader, passed down as a prop.
+  // Full refresh — kept for the less-frequent call sites (bulk import,
+  // quick period setup, a delete that could have cascaded into any
+  // section's plan, or copying periods into other sections) where
+  // re-fetching everything is the simplest correct thing to do and isn't
+  // the hot path. `onReloadSchoolData` (App.jsx's loadSchoolData) already
+  // covers allRequirements along with subjects/teachers/periods/rooms/
+  // classGroups in one call.
   async function load() {
-    setRequirementsCache({})
-    await Promise.all([onReloadSchoolData(), loadRequirements(activeSectionId, { force: true })])
+    await onReloadSchoolData()
   }
 
   // Follow the sidebar's selection by default; overridden locally via
@@ -152,11 +118,6 @@ export default function DataEntryTab({
   useEffect(() => {
     setActiveSectionId(classGroupId)
   }, [classGroupId])
-
-  useEffect(() => {
-    loadRequirements(activeSectionId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSectionId])
 
   async function handleQuickSetupPeriods() {
     if (settingUpPeriods) return
@@ -285,26 +246,33 @@ export default function DataEntryTab({
     reload: reloadAll,
   }
 
+  // Replaces this section's slice of `allRequirements` with a freshly
+  // computed one, leaving every other section's entries untouched — used
+  // by all three handlers below instead of `load()`, which would refetch
+  // subjects/teachers/periods/rooms/classGroups school-wide for what's
+  // only ever a single-section edit.
+  function replaceSectionRequirements(next) {
+    setAllRequirements((prev) => [
+      ...prev.filter((r) => r.class_group_id !== activeSectionId),
+      ...next,
+    ])
+  }
+
   async function handleUpdatePeriods(subjectId, periodsPerWeek) {
     try {
-      // Re-fetch instead of reading from React state to close a race if
-      // this field is blurred twice in quick succession (e.g. tabbing
-      // through fields) — see PeriodsPerWeekInput's docstring below.
-      // `fresh` is also the base for the state update below instead of
-      // `load()` (which used to follow this and cost 5 more parallel
-      // GETs, on top of this one, for a single field edit) — subjects/
-      // teachers/periods/rooms can't have changed as a side effect of
-      // editing one section's periods/week, so there's nothing else here
-      // that needs re-fetching.
+      // Re-fetch just this section instead of reading from React state to
+      // close a race if this field is blurred twice in quick succession
+      // (e.g. tabbing through fields) — see PeriodsPerWeekInput's
+      // docstring below.
       const fresh = await api.listRequirements(activeSectionId)
       const existing = fresh.find((r) => r.subject_id === subjectId)
       if (existing) {
         if (periodsPerWeek <= 0) {
           await api.deleteRequirement(existing.id)
-          applyRequirements(fresh.filter((r) => r.id !== existing.id))
+          replaceSectionRequirements(fresh.filter((r) => r.id !== existing.id))
         } else {
           const updated = await api.updateRequirement(existing.id, { periods_per_week: periodsPerWeek })
-          applyRequirements(fresh.map((r) => (r.id === existing.id ? updated : r)))
+          replaceSectionRequirements(fresh.map((r) => (r.id === existing.id ? updated : r)))
         }
       } else if (periodsPerWeek > 0) {
         const created = await api.createRequirement(activeSectionId, {
@@ -312,7 +280,7 @@ export default function DataEntryTab({
           subject_id: subjectId,
           periods_per_week: periodsPerWeek,
         })
-        applyRequirements([...fresh, created])
+        replaceSectionRequirements([...fresh, created])
       }
     } catch (err) {
       setError(err.message)
@@ -322,17 +290,13 @@ export default function DataEntryTab({
   async function handleSetPreferredTeacher(subjectId, teacherId) {
     try {
       // Unlike handleUpdatePeriods above, this skips the leading re-fetch
-      // and trusts local `requirements` state directly — a <select>'s
-      // onChange is one discrete event, not a text field a user can blur
-      // twice in quick succession, so there's no analogous race to guard
-      // against. Every other place that touches `requirements` in this
-      // file keeps local state in sync with the server's response
-      // (nothing here calls the old full `load()` anymore), so it's safe
-      // to rely on. This is the one round trip this action needs.
+      // and trusts `allRequirements` directly — a <select>'s onChange is
+      // one discrete event, not a text field a user can blur twice in
+      // quick succession, so there's no analogous race to guard against.
       const requirement = requirements.find((r) => r.subject_id === subjectId)
       if (!requirement) return // picker is only shown once a requirement exists
       const updated = await api.updateRequirement(requirement.id, { preferred_teacher_id: teacherId })
-      applyRequirements(requirements.map((r) => (r.id === updated.id ? updated : r)))
+      setAllRequirements((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
     } catch (err) {
       setError(err.message)
     }
@@ -344,7 +308,7 @@ export default function DataEntryTab({
       const requirement = requirements.find((r) => r.subject_id === subjectId)
       if (!requirement) return
       const updated = await api.updateRequirement(requirement.id, { assistant_teacher_id: teacherId })
-      applyRequirements(requirements.map((r) => (r.id === updated.id ? updated : r)))
+      setAllRequirements((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
     } catch (err) {
       setError(err.message)
     }
@@ -513,6 +477,7 @@ export default function DataEntryTab({
           teachers={teachers}
           subjects={subjects}
           classGroups={classGroups}
+          allRequirements={allRequirements}
           onTeachersChanged={teachersApi}
           readOnly={readOnly}
         />

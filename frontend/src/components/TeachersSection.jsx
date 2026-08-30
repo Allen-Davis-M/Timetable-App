@@ -29,7 +29,29 @@ function distinctGrades(classGroups) {
   return grades
 }
 
-export default function TeachersSection({ schoolId, teachers, subjects, classGroups, onTeachersChanged, readOnly }) {
+// This teacher's committed periods/week across every section in the
+// school, from the plan (SubjectRequirement.preferred_teacher_id) — not
+// the generated timetable. That's a deliberate scope choice: this is
+// meant to warn about overload *while an admin is still assigning
+// teachers*, before anyone has generated anything, so it can only count
+// what's been explicitly pinned. A subject left on "Any (let solver
+// choose)" doesn't show up here for anyone, since nothing — including
+// the app — knows yet who'll actually teach it; the true final total
+// (including solver-assigned subjects) only exists once a timetable has
+// been generated, which is a separate, later feature.
+function teacherWorkload(teacherId, allRequirements, subjects, classGroups) {
+  const rows = allRequirements
+    .filter((r) => r.preferred_teacher_id === teacherId)
+    .map((r) => ({
+      ...r,
+      subjectName: subjects.find((s) => s.id === r.subject_id)?.name ?? 'Unknown subject',
+      classGroup: classGroups.find((cg) => cg.id === r.class_group_id),
+    }))
+  const total = rows.reduce((sum, r) => sum + r.periods_per_week, 0)
+  return { rows, total }
+}
+
+export default function TeachersSection({ schoolId, teachers, subjects, classGroups, allRequirements, onTeachersChanged, readOnly }) {
   const [error, setError] = useState(null)
   const [showImport, setShowImport] = useState(true)
   const [addTeacherOpen, setAddTeacherOpen] = useState(false)
@@ -171,10 +193,31 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
           const available = subjects.filter((s) => !s._pending && !teacher.qualified_subject_ids.includes(s.id))
           const qualifiedGrades = teacher.qualified_grades || []
           const availableGrades = allGrades.filter((g) => !qualifiedGrades.includes(g))
+          const workload = teacherWorkload(teacher.id, allRequirements, subjects, classGroups)
+          const overLimit = teacher.max_periods_per_week != null && workload.total > teacher.max_periods_per_week
+          const nearLimit =
+            !overLimit && teacher.max_periods_per_week != null && workload.total >= teacher.max_periods_per_week * 0.9
           return (
             <div key={teacher.id} className="flex flex-col gap-2 p-3">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="w-40 flex-none font-medium">{teacher.name}</div>
+              <div className="w-40 flex-none">
+                <div className="font-medium">{teacher.name}</div>
+                <div
+                  className={`text-xs font-medium ${
+                    overLimit ? 'text-red-600' : nearLimit ? 'text-amber-600' : 'text-slate-400'
+                  }`}
+                  title={
+                    teacher.max_periods_per_week
+                      ? overLimit
+                        ? `Over their ${teacher.max_periods_per_week}/week limit`
+                        : `Limit: ${teacher.max_periods_per_week}/week`
+                      : 'No weekly limit set for this teacher'
+                  }
+                >
+                  {workload.total} {workload.total === 1 ? 'period' : 'periods'}/week
+                  {teacher.max_periods_per_week ? ` of ${teacher.max_periods_per_week}` : ''}
+                </div>
+              </div>
               <div className="relative flex flex-1 flex-wrap items-center gap-1.5">
                 <AnimatePresence initial={false}>
                   {qualified.map((s) => (
@@ -328,6 +371,25 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
                 Eligible as an assistant teacher
               </label>
             </div>
+
+            {workload.rows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pl-0 sm:pl-[172px]">
+                <span className="mr-1 flex-none text-xs text-slate-400">Assigned:</span>
+                {workload.rows.map((r) => (
+                  <span
+                    key={r.id}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600"
+                    title={`${r.periods_per_week} period${r.periods_per_week === 1 ? '' : 's'}/week`}
+                  >
+                    {r.subjectName}
+                    <span className="text-slate-400">
+                      · {r.classGroup ? `${r.classGroup.grade ? `${r.classGroup.grade} ` : ''}Sec ${r.classGroup.name}` : 'Unknown section'}
+                    </span>
+                    <span className="font-medium text-slate-500">{r.periods_per_week}/wk</span>
+                  </span>
+                ))}
+              </div>
+            )}
             </div>
           )
         })}

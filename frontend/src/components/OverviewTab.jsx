@@ -15,7 +15,7 @@ import { useState } from 'react'
  * separate set of fetches from the header's progress bar (App.jsx) on
  * every visit to this tab — twice the requests for the same data, and it
  * silently broke once useSetupProgress started expecting
- * periods/subjects/teachers/requirementsCache to be handed in rather than
+ * periods/subjects/teachers/allRequirements to be handed in rather than
  * fetched itself, since this second call site never passed them. Sharing
  * App.jsx's single instance fixes both: one fetch instead of two, and one
  * hook call site to keep in sync instead of two.

@@ -37,6 +37,25 @@ def list_class_groups(school_id: int, db: Session = Depends(get_db), current_use
     return db.query(ClassGroup).filter(ClassGroup.school_id == school_id).all()
 
 
+@router.get("/requirements", response_model=list[SubjectRequirementOut])
+def list_all_requirements(school_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Every requirement across every section in the school, not just one
+    class group — used by TeachersSection.jsx's live workload total, which
+    needs to sum a teacher's periods/week commitments across all sections
+    at once, not just whichever one is currently open. Registered here,
+    before /{class_group_id}, on purpose: FastAPI matches routes in
+    declaration order, and this literal one-segment path would otherwise
+    be shadowed by /{class_group_id} treating "requirements" as an
+    (invalid) class_group_id."""
+    require_school_access(db, current_user, school_id)
+    return (
+        db.query(SubjectRequirement)
+        .join(ClassGroup, SubjectRequirement.class_group_id == ClassGroup.id)
+        .filter(ClassGroup.school_id == school_id)
+        .all()
+    )
+
+
 @router.get("/{class_group_id}", response_model=ClassGroupOut)
 def get_class_group(class_group_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     class_group = db.get(ClassGroup, class_group_id)

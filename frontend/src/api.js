@@ -155,6 +155,7 @@ export const api = {
 
   // Subject requirements (nested under class groups)
   listRequirements: (classGroupId) => get(`/class-groups/${classGroupId}/requirements`),
+  listAllRequirements: (schoolId) => get(`/class-groups/requirements?school_id=${schoolId}`),
   createRequirement: (classGroupId, data) =>
     post(`/class-groups/${classGroupId}/requirements`, data),
   updateRequirement: (id, data) => put(`/class-groups/requirements/${id}`, data),

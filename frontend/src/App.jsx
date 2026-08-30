@@ -69,18 +69,17 @@ function App() {
   // to a school changes from one tab switch to the next.
   const [members, setMembers] = useState([])
   const [invites, setInvites] = useState([])
-  // Per-section cache of Data Entry's "requirements" (periods/week per
-  // subject), `{ [classGroupId]: requirement[] }` — same reasoning as
-  // subjects/periods/rooms above: kept here instead of inside
-  // DataEntryTab so a section's plan, once fetched, survives switching
-  // away to another tab and back instead of being thrown away and
-  // re-fetched (which is what was still showing "0s for a few seconds"
-  // even after subjects/teachers/periods/rooms were lifted up, since
-  // this cache hadn't been). Deliberately not eagerly fetched for every
-  // section up front — a school can have dozens of sections, and most
-  // won't be visited in a given sitting — it fills in lazily as
-  // DataEntryTab visits each section.
-  const [requirementsCache, setRequirementsCache] = useState({})
+  // Every SubjectRequirement across every section in the school (periods/
+  // week + preferred/assistant teacher per subject per section), fetched
+  // once as a flat list — same "lift it so a tab switch can't throw it
+  // away" reasoning as subjects/periods/rooms above, but school-wide
+  // rather than per-section-and-lazy the way this used to be cached.
+  // Needed in full, always, now that TeachersSection.jsx sums each
+  // teacher's committed periods/week *across every section* for the live
+  // workload total — a lazy per-visited-section cache would silently
+  // undercount any section the admin hasn't happened to open yet, which
+  // defeats the point of a workload warning.
+  const [allRequirements, setAllRequirements] = useState([])
   // The generated timetable, and whether a generation is in progress —
   // same reasoning as everything above: TimetableTab gets unmounted on
   // every tab switch, so state (and an in-flight fetch meant to recover
@@ -187,7 +186,7 @@ function App() {
       // at all just because Team isn't something a viewer can see anyway
       // (App.jsx only adds the Team tab for `role === 'admin'`).
       const isAdmin = schools.find((s) => s.id === schoolId)?.role === 'admin'
-      const [cg, t, s, p, rm, c, mem, inv, tts] = await Promise.all([
+      const [cg, t, s, p, rm, c, mem, inv, tts, reqs] = await Promise.all([
         api.listClassGroups(schoolId),
         api.listTeachers(schoolId),
         api.listSubjects(schoolId),
@@ -197,6 +196,7 @@ function App() {
         isAdmin ? api.listMembers(schoolId) : Promise.resolve([]),
         isAdmin ? api.listInvites(schoolId) : Promise.resolve([]),
         api.listTimetables(schoolId),
+        api.listAllRequirements(schoolId),
       ])
       setClassGroups(cg)
       setTeachers(t)
@@ -206,6 +206,7 @@ function App() {
       setConstraints(c)
       setMembers(mem)
       setInvites(inv)
+      setAllRequirements(reqs)
       // No `created_at` on TimetableOut — ids are assigned in creation
       // order, so the highest id is the most recently generated one.
       const latestTimetable = tts.length > 0 ? tts.reduce((a, b) => (b.id > a.id ? b : a)) : null
@@ -412,7 +413,7 @@ function App() {
     setConstraints([])
     setMembers([])
     setInvites([])
-    setRequirementsCache({})
+    setAllRequirements([])
     setTimetable(null)
     setGenerating(false)
     setShowAuth(false)
@@ -443,7 +444,7 @@ function App() {
     schoolId: selectedClassGroup ? selectedSchoolId : null,
     classGroupId: selectedClassGroupId,
     classGroupLabel: selectedClassGroup ? `Section ${selectedClassGroup.name}` : null,
-    // periods/subjects/teachers/constraints/requirementsCache are already
+    // periods/subjects/teachers/constraints/allRequirements are already
     // loaded and kept live here — handed to the hook instead of it
     // independently re-fetching the same lists on every tab switch (this
     // used to include its own listConstraints/listTimetables calls,
@@ -453,8 +454,7 @@ function App() {
     teachers,
     constraints,
     hasTimetable: timetable?.status === 'draft',
-    requirementsCache,
-    setRequirementsCache,
+    allRequirements,
   })
 
   if (inviteToken && !inviteHandled) {
@@ -668,8 +668,8 @@ function App() {
                     rooms={rooms}
                     setRooms={setRooms}
                     classGroups={classGroups}
-                    requirementsCache={requirementsCache}
-                    setRequirementsCache={setRequirementsCache}
+                    allRequirements={allRequirements}
+                    setAllRequirements={setAllRequirements}
                     onReloadSchoolData={() => loadSchoolData(selectedSchoolId)}
                     readOnly={isViewer}
                     subView={dataEntrySubView}
