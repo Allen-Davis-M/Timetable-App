@@ -57,6 +57,11 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
   const [addTeacherOpen, setAddTeacherOpen] = useState(false)
   const [openDropdownId, setOpenDropdownId] = useState(null)
   const [openGradeDropdownId, setOpenGradeDropdownId] = useState(null)
+  // Which teacher's name/email/weekly-limit is currently being edited
+  // (teacher id, or null) — everything else about a teacher (subjects,
+  // grades, assistant eligibility) is already directly editable inline;
+  // this covers the basic fields that weren't yet.
+  const [editingTeacherId, setEditingTeacherId] = useState(null)
 
   const allGrades = distinctGrades(classGroups)
 
@@ -197,11 +202,41 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
           const overLimit = teacher.max_periods_per_week != null && workload.total > teacher.max_periods_per_week
           const nearLimit =
             !overLimit && teacher.max_periods_per_week != null && workload.total >= teacher.max_periods_per_week * 0.9
+          if (editingTeacherId === teacher.id) {
+            return (
+              <div key={teacher.id} className="p-3">
+                <TeacherEditForm
+                  teacher={teacher}
+                  onCancel={() => setEditingTeacherId(null)}
+                  onSave={async (data) => {
+                    try {
+                      await onTeachersChanged.update(teacher.id, data)
+                      setEditingTeacherId(null)
+                    } catch (err) {
+                      setError(err.message)
+                    }
+                  }}
+                />
+              </div>
+            )
+          }
           return (
-            <div key={teacher.id} className="flex flex-col gap-2 p-3">
+            <div key={teacher.id} className="group flex flex-col gap-2 p-3">
             <div className="flex flex-wrap items-center gap-3">
               <div className="w-40 flex-none">
-                <div className="font-medium">{teacher.name}</div>
+                <div className="flex items-center gap-1">
+                  <span className="font-medium">{teacher.name}</span>
+                  {!readOnly && (
+                    <button
+                      onClick={() => setEditingTeacherId(teacher.id)}
+                      title={`Edit ${teacher.name}`}
+                      aria-label={`Edit ${teacher.name}`}
+                      className="opacity-0 text-slate-300 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
+                    >
+                      ✎
+                    </button>
+                  )}
+                </div>
                 <div
                   className={`text-xs font-medium ${
                     overLimit ? 'text-red-600' : nearLimit ? 'text-amber-600' : 'text-slate-400'
@@ -373,21 +408,33 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
             </div>
 
             {workload.rows.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 pl-0 sm:pl-[172px]">
-                <span className="mr-1 flex-none text-xs text-slate-400">Assigned:</span>
-                {workload.rows.map((r) => (
-                  <span
-                    key={r.id}
-                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600"
-                    title={`${r.periods_per_week} period${r.periods_per_week === 1 ? '' : 's'}/week`}
-                  >
-                    {r.subjectName}
-                    <span className="text-slate-400">
-                      · {r.classGroup ? `${r.classGroup.grade ? `${r.classGroup.grade} ` : ''}Sec ${r.classGroup.name}` : 'Unknown section'}
-                    </span>
-                    <span className="font-medium text-slate-500">{r.periods_per_week}/wk</span>
-                  </span>
-                ))}
+              <div className="pl-0 sm:pl-[172px]">
+                <table className="w-fit min-w-[280px] border-collapse text-xs">
+                  <thead>
+                    <tr className="text-slate-400">
+                      <th className="border-b border-slate-200 py-1 pr-4 text-left font-medium">Subject</th>
+                      <th className="border-b border-slate-200 py-1 pr-4 text-left font-medium">Class</th>
+                      <th className="border-b border-slate-200 py-1 text-right font-medium">Periods/week</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workload.rows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="border-b border-slate-100 py-1 pr-4 text-slate-700">{r.subjectName}</td>
+                        <td className="border-b border-slate-100 py-1 pr-4 text-slate-500">
+                          {r.classGroup ? `${r.classGroup.grade ? `${r.classGroup.grade} · ` : ''}Sec ${r.classGroup.name}` : 'Unknown section'}
+                        </td>
+                        <td className="border-b border-slate-100 py-1 text-right font-medium text-slate-700">
+                          {r.periods_per_week}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={2} className="pt-1 text-right text-slate-400">Total</td>
+                      <td className="pt-1 text-right font-semibold text-slate-700">{workload.total}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             )}
             </div>
@@ -396,6 +443,111 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
         {teachers.length === 0 && (
           <p className="p-4 text-sm text-slate-500">No teachers yet — add one above, or import a spreadsheet.</p>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Inline edit for a teacher's basic fields — name, email, and weekly
+ * period limit. Everything else about a teacher (subjects, grades,
+ * assistant eligibility) is already editable directly on their row via
+ * chips/checkboxes; these three fields weren't, and "the teacher's name
+ * is wrong" or "we need to raise/lower their weekly limit" are both real,
+ * ordinary corrections an admin needs a way to make after creation.
+ */
+function TeacherEditForm({ teacher, onSave, onCancel }) {
+  const [name, setName] = useState(teacher.name)
+  const [email, setEmail] = useState(teacher.email || '')
+  const [maxPeriods, setMaxPeriods] = useState(
+    teacher.max_periods_per_week != null ? String(teacher.max_periods_per_week) : ''
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleSave() {
+    if (!name.trim() || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave({
+        name: name.trim(),
+        email: email.trim() || null,
+        max_periods_per_week: maxPeriods.trim() ? Number(maxPeriods) : null,
+      })
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md bg-indigo-50/60 p-3 sm:flex-row sm:items-end sm:gap-3">
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`edit-teacher-name-${teacher.id}`} className="text-xs font-medium text-slate-500">
+          Name
+        </label>
+        <input
+          id={`edit-teacher-name-${teacher.id}`}
+          autoFocus
+          value={name}
+          disabled={saving}
+          onChange={(e) => setName(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+          className="w-40 rounded border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`edit-teacher-email-${teacher.id}`} className="text-xs font-medium text-slate-500">
+          Email (optional)
+        </label>
+        <input
+          id={`edit-teacher-email-${teacher.id}`}
+          type="email"
+          value={email}
+          disabled={saving}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+          className="w-48 rounded border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`edit-teacher-max-${teacher.id}`} className="text-xs font-medium text-slate-500">
+          Max periods/week (optional)
+        </label>
+        <input
+          id={`edit-teacher-max-${teacher.id}`}
+          type="number"
+          min="0"
+          value={maxPeriods}
+          disabled={saving}
+          onChange={(e) => setMaxPeriods(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave()
+            if (e.key === 'Escape') onCancel()
+          }}
+          className="w-28 rounded border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
+        />
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!name.trim() || saving}
+          className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
     </div>
   )
