@@ -647,11 +647,52 @@ function PlanSection({
   readOnly,
 }) {
   // Whether the subject picker (below) is showing instead of the periods/
-  // week table — forced open automatically whenever this section has no
-  // subjects picked yet (`rows.length === 0`), and toggleable afterward
-  // via "Edit subjects" so an admin can add/remove ones later without
-  // that always being the first thing this page shows.
-  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false)
+  // week table. Starts open for a section with nothing picked yet, closed
+  // otherwise — decided once per section switch (the effect below), not
+  // re-derived from `rows.length` on every render, which is what this
+  // used to do: as soon as the *first* checked subject's create request
+  // resolved, `rows.length` flipped from 0 to 1 and the whole picker
+  // vanished into the table mid-selection, cutting the admin off if they
+  // meant to pick several subjects before continuing. Now it only closes
+  // when "Continue"/"Edit subjects" explicitly say so.
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(() => rows.length === 0)
+  useEffect(() => {
+    setSubjectPickerOpen(rows.length === 0)
+    // Deliberately only re-derives on a section switch, not whenever
+    // `rows` changes — see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSectionId])
+  // Optimistic override for the picker's checkboxes — without this, each
+  // click waited on a full round trip (through Railway, then Supabase)
+  // before visually checking/unchecking at all, since `rows` only reflects
+  // what the server has confirmed. On a slow connection that reads as
+  // unresponsive, and clicking several boxes in a row before the first
+  // request resolves computes each one from the same stale pre-click
+  // state (same race already fixed for the sidebar's grade reorder).
+  // Cleared once the server-confirmed selection actually matches what was
+  // optimistically set, so `rows` becomes the source of truth again as
+  // soon as it can be.
+  const [localSelectedSubjectIds, setLocalSelectedSubjectIds] = useState(null)
+  const confirmedSelectedSubjectIds = rows.map((row) => row.subject.id)
+  const confirmedSelectedKey = [...confirmedSelectedSubjectIds].sort((a, b) => a - b).join(',')
+  useEffect(() => {
+    if (
+      localSelectedSubjectIds &&
+      [...localSelectedSubjectIds].sort((a, b) => a - b).join(',') === confirmedSelectedKey
+    ) {
+      setLocalSelectedSubjectIds(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedSelectedKey])
+  const pickerSelectedSubjectIds = localSelectedSubjectIds ?? confirmedSelectedSubjectIds
+
+  function handlePickerToggle(subjectId, shouldSelect) {
+    setLocalSelectedSubjectIds(
+      shouldSelect ? [...pickerSelectedSubjectIds, subjectId] : pickerSelectedSubjectIds.filter((id) => id !== subjectId)
+    )
+    onToggleSectionSubject(subjectId, shouldSelect)
+  }
+
   const totalWeeklyPeriods = rows.reduce((sum, row) => sum + row.periodsPerWeek, 0)
   const selectedAll = selectedSubjectIds.length === rows.length && rows.length > 0
   const selectedCount = selectedSubjectIds.length
@@ -698,23 +739,23 @@ function PlanSection({
   // Shown instead of the periods/week table either the first time this
   // section has no subjects picked yet, or when "Edit subjects" below
   // reopens it on purpose.
-  if (rows.length === 0 || subjectPickerOpen) {
+  if (subjectPickerOpen) {
     return (
       <div className="flex flex-col gap-5">
         <div>
           <h4 className="text-base font-medium">This section's plan</h4>
           <p className="mt-1 text-sm text-slate-500">
-            {rows.length === 0
+            {pickerSelectedSubjectIds.length === 0
               ? "First, pick which subjects this section needs — only these show up below, not every subject in the school."
               : 'Add or remove subjects for this section.'}
           </p>
         </div>
         <SectionSubjectPicker
           subjects={availableSubjects}
-          selectedSubjectIds={rows.map((row) => row.subject.id)}
-          onToggleSubject={onToggleSectionSubject}
+          selectedSubjectIds={pickerSelectedSubjectIds}
+          onToggleSubject={handlePickerToggle}
           onDone={() => setSubjectPickerOpen(false)}
-          canFinish={rows.length > 0}
+          canFinish={pickerSelectedSubjectIds.length > 0}
           readOnly={readOnly}
         />
       </div>
