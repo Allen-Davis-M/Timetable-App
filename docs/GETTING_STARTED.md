@@ -13,9 +13,11 @@ The database schema changed (added `users`, `schools.owner_id`,
 `class_groups.grade`, `timetables.solver_status` / `timetables.error_message`
 for the async generation job, `timetable_entries.room_id` for room
 assignment, `subjects.required_room_type`, used to match a subject to a
-room when the solver assigns rooms, and — most recently —
-`teachers.qualified_grades`, used to restrict a teacher to specific grades
-instead of every grade in the school).
+room when the solver assigns rooms, `teachers.qualified_grades`, used to
+restrict a teacher to specific grades instead of every grade in the
+school, and — most recently — `teachers.is_assistant_eligible` and
+`subject_requirements.assistant_teacher_id`, used to record an optional
+second/assistant teacher on a section's plan).
 SQLite's auto-create-on-startup only creates
 *missing* tables — it won't add new columns to ones that already exist. If
 you already have a `backend/dev.db` from before, **delete it** before
@@ -46,6 +48,20 @@ single statement, so every existing teacher ends up with `[]`
 `NULL`. There's no data loss risk either way: the API tolerates `NULL`
 here (see `TeacherOut.qualified_grades` in `app/schemas/teacher.py`) and
 treats it the same as `[]`.
+
+Same deal for the assistant-teacher fields:
+
+```sql
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS is_assistant_eligible BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE subject_requirements ADD COLUMN IF NOT EXISTS assistant_teacher_id INTEGER REFERENCES teachers(id);
+ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS assistant_teacher_id INTEGER REFERENCES teachers(id);
+```
+
+Every existing teacher backfills to `is_assistant_eligible = false` (not
+eligible until an admin opts them in) and every existing requirement's/
+entry's `assistant_teacher_id` backfills to `NULL` (no assistant set) —
+both match the behavior every row already had before these columns
+existed.
 
 ## 1. Backend
 

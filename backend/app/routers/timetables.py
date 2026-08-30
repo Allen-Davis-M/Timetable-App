@@ -39,6 +39,7 @@ from app.models.school import (
     Period,
     Room,
     Subject,
+    SubjectRequirement,
     Teacher,
     Timetable,
     TimetableEntry,
@@ -83,6 +84,8 @@ def _to_timetable_out(db: Session, timetable: Timetable) -> TimetableOut:
             "subject_name": subjects[e.subject_id].name,
             "teacher_id": e.teacher_id,
             "teacher_name": teachers[e.teacher_id].name,
+            "assistant_teacher_id": e.assistant_teacher_id,
+            "assistant_teacher_name": teachers[e.assistant_teacher_id].name if e.assistant_teacher_id else None,
             "period_id": e.period_id,
             "period_label": period.label,
             "day_of_week": period.day_of_week,
@@ -120,6 +123,19 @@ def _run_generation_job(timetable_id: int, school_id: int) -> None:
         timetable.solver_status = result.status
 
         if result.status in ("optimal", "feasible"):
+            # (class_group_id, subject_id) -> assistant_teacher_id, from the
+            # plan — not something the solver chooses, just carried over so
+            # each generated entry can show who's assisting. A single query
+            # up front rather than one per assignment, since a school-wide
+            # generation can produce hundreds of entries.
+            assistant_by_requirement = {
+                (r.class_group_id, r.subject_id): r.assistant_teacher_id
+                for r in db.query(SubjectRequirement)
+                .join(ClassGroup, SubjectRequirement.class_group_id == ClassGroup.id)
+                .filter(ClassGroup.school_id == school_id)
+                .all()
+                if r.assistant_teacher_id is not None
+            }
             for a in result.assignments:
                 key = (a["class_group_id"], a["subject_id"], a["teacher_id"], a["period_id"])
                 db.add(TimetableEntry(
@@ -127,6 +143,7 @@ def _run_generation_job(timetable_id: int, school_id: int) -> None:
                     class_group_id=a["class_group_id"],
                     subject_id=a["subject_id"],
                     teacher_id=a["teacher_id"],
+                    assistant_teacher_id=assistant_by_requirement.get((a["class_group_id"], a["subject_id"])),
                     period_id=a["period_id"],
                     room_id=a.get("room_id"),
                     lab_batch=a.get("batch"),

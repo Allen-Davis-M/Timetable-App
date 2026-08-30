@@ -12,6 +12,7 @@ class TeacherCreate(BaseModel):
     qualified_grades: list[str] = []
     unavailable_period_ids: list[int] = []
     max_periods_per_week: int | None = None
+    is_assistant_eligible: bool = False
 
 
 class TeacherUpdate(BaseModel):
@@ -21,6 +22,7 @@ class TeacherUpdate(BaseModel):
     qualified_grades: list[str] | None = None
     unavailable_period_ids: list[int] | None = None
     max_periods_per_week: int | None = None
+    is_assistant_eligible: bool | None = None
 
 
 class TeacherOut(BaseModel):
@@ -38,3 +40,4 @@ class TeacherOut(BaseModel):
     qualified_grades: list[str] | None = None
     unavailable_period_ids: list[int]
     max_periods_per_week: int | None
+    is_assistant_eligible: bool

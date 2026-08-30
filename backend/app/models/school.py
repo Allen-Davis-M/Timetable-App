@@ -117,6 +117,13 @@ class Teacher(Base):
     # period_ids this teacher is NOT available (hard constraint shortcut)
     unavailable_period_ids = Column(JSON, default=list)
     max_periods_per_week = Column(Integer, nullable=True)
+    # Whether this teacher can be picked as an *assistant* teacher on a
+    # section's plan (see SubjectRequirement.assistant_teacher_id below) —
+    # a separate flag from qualified_subject_ids, since being someone's
+    # assistant for a class isn't the same as being qualified to teach
+    # that subject solo. Defaults false so no existing teacher becomes
+    # assistant-eligible just because this column was added.
+    is_assistant_eligible = Column(Boolean, nullable=False, default=False, server_default="false")
 
     school = relationship("School", back_populates="teachers")
 
@@ -160,6 +167,13 @@ class SubjectRequirement(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     periods_per_week = Column(Integer, nullable=False)
     preferred_teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
+    # Optional second teacher for this section's subject — picked from
+    # teachers flagged Teacher.is_assistant_eligible, independent of
+    # qualified_subject_ids (an assistant doesn't need to be independently
+    # qualified to teach the subject solo). Purely informational: the
+    # solver doesn't currently schedule around this, it's just recorded
+    # and shown alongside the main teacher.
+    assistant_teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
 
     __table_args__ = (UniqueConstraint("class_group_id", "subject_id"),)
 
@@ -221,6 +235,12 @@ class TimetableEntry(Base):
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=False)
     locked = Column(Boolean, default=False)  # admin locked this slot before regenerating
+    # Copied from SubjectRequirement.assistant_teacher_id at generation
+    # time (see _run_generation_job in app/routers/timetables.py) — not
+    # something the solver chooses or optimizes around, just carried over
+    # so the generated grid can show who's assisting on this slot without
+    # a separate lookup back to the plan.
+    assistant_teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
     # 1-indexed batch number when this entry came from a Subject.lab_batch_count
     # split (see app/services/solver.py) — null for every normal, unsplit
     # entry. Lets the frontend show "Batch 1"/"Batch 2" for what would

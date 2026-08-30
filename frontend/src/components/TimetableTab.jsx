@@ -201,12 +201,24 @@ export default function TimetableTab({
         (e) => e.period_id === period.id && e.class_group_id === classGroup.id
       )
     }
+    // Includes slots where this teacher is only the *assistant*, not the
+    // main teacher — their own timetable should show both, not just the
+    // classes they lead solo.
     return timetable.entries.filter(
-      (e) => e.period_id === period.id && e.teacher_id === selectedTeacherId
+      (e) =>
+        e.period_id === period.id &&
+        (e.teacher_id === selectedTeacherId || e.assistant_teacher_id === selectedTeacherId)
     )
   }
 
   const classGroupName = (id) => classGroups.find((c) => c.id === id)?.name
+
+  // In By Teacher view, an entry can show up because the selected teacher
+  // is the main teacher or because they're only the assistant (see
+  // entriesFor above) — this tells the two apart so the grid can label
+  // "(Assisting)" instead of implying they're leading a class solo.
+  const isSelectedTeacherAssisting = (e) =>
+    view === 'teacher' && e.assistant_teacher_id === selectedTeacherId && e.teacher_id !== selectedTeacherId
 
   const isGenerating = generating || timetable?.status === 'generating'
   const failed = !isGenerating && timetable?.status === 'failed'
@@ -430,8 +442,13 @@ export default function TimetableTab({
                                       )}
                                     </div>
                                     <div className="text-xs text-slate-500">
-                                      {view === 'section' ? e.teacher_name : `Sec ${classGroupName(e.class_group_id)}`}
+                                      {view === 'section'
+                                        ? e.teacher_name
+                                        : `Sec ${classGroupName(e.class_group_id)}${isSelectedTeacherAssisting(e) ? ' (Assisting)' : ''}`}
                                     </div>
+                                    {view === 'section' && e.assistant_teacher_name && (
+                                      <div className="text-xs text-slate-400">Asst: {e.assistant_teacher_name}</div>
+                                    )}
                                     {e.room_name && <div className="text-xs text-slate-400">{e.room_name}</div>}
                                   </div>
                                 ))}
@@ -461,8 +478,13 @@ export default function TimetableTab({
                             >
                               <div className="font-medium">{singleEntry.subject_name}</div>
                               <div className="text-xs text-slate-500">
-                                {view === 'section' ? singleEntry.teacher_name : `Sec ${classGroupName(singleEntry.class_group_id)}`}
+                                {view === 'section'
+                                  ? singleEntry.teacher_name
+                                  : `Sec ${classGroupName(singleEntry.class_group_id)}${isSelectedTeacherAssisting(singleEntry) ? ' (Assisting)' : ''}`}
                               </div>
+                              {view === 'section' && singleEntry.assistant_teacher_name && (
+                                <div className="text-xs text-slate-400">Asst: {singleEntry.assistant_teacher_name}</div>
+                              )}
                               {singleEntry.room_name && (
                                 <div className="text-xs text-slate-400">{singleEntry.room_name}</div>
                               )}

@@ -121,6 +121,7 @@ def add_requirement(
     if existing:
         existing.periods_per_week = payload.periods_per_week
         existing.preferred_teacher_id = payload.preferred_teacher_id
+        existing.assistant_teacher_id = payload.assistant_teacher_id
         db.commit()
         db.refresh(existing)
         return existing

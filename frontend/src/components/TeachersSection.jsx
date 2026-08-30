@@ -80,6 +80,16 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
     }
   }
 
+  async function handleToggleAssistantEligible(teacher) {
+    try {
+      await onTeachersChanged.update(teacher.id, {
+        is_assistant_eligible: !teacher.is_assistant_eligible,
+      })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   async function handleDeleteTeacher(teacher) {
     if (!window.confirm(`Remove ${teacher.name}? This also removes them from every subject and section they're assigned to.`)) {
       return
@@ -305,6 +315,19 @@ export default function TeachersSection({ schoolId, teachers, subjects, classGro
                 </div>
               )}
             </div>
+
+            <div className="pl-0 sm:pl-[172px]">
+              <label className="flex w-fit cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={teacher.is_assistant_eligible}
+                  disabled={readOnly}
+                  onChange={() => handleToggleAssistantEligible(teacher)}
+                  className="h-3.5 w-3.5 rounded border-slate-300"
+                />
+                Eligible as an assistant teacher
+              </label>
+            </div>
             </div>
           )
         })}
@@ -332,6 +355,7 @@ function AddTeacherModal({ schoolId, subjects, allGrades, onClose, onAdded }) {
   // Teacher.qualified_grades server-side, so leaving this untouched here
   // behaves exactly like every teacher did before this field existed.
   const [selectedGrades, setSelectedGrades] = useState([])
+  const [isAssistantEligible, setIsAssistantEligible] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
@@ -358,6 +382,7 @@ function AddTeacherModal({ schoolId, subjects, allGrades, onClose, onAdded }) {
         name: name.trim(),
         qualified_subject_ids: selectedSubjectIds,
         qualified_grades: selectedGrades,
+        is_assistant_eligible: isAssistantEligible,
       })
       await onAdded()
     } catch (err) {
@@ -447,6 +472,15 @@ function AddTeacherModal({ schoolId, subjects, allGrades, onClose, onAdded }) {
               </div>
             </div>
           )}
+
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={isAssistantEligible}
+              onChange={(e) => setIsAssistantEligible(e.target.checked)}
+            />
+            Eligible as an assistant teacher
+          </label>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 

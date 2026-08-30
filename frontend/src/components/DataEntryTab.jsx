@@ -338,6 +338,18 @@ export default function DataEntryTab({
     }
   }
 
+  async function handleSetAssistantTeacher(subjectId, teacherId) {
+    try {
+      // Same reasoning as handleSetPreferredTeacher above.
+      const requirement = requirements.find((r) => r.subject_id === subjectId)
+      if (!requirement) return
+      const updated = await api.updateRequirement(requirement.id, { assistant_teacher_id: teacherId })
+      applyRequirements(requirements.map((r) => (r.id === updated.id ? updated : r)))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   // Excludes subjects still `_pending` (optimistically added, not yet
   // confirmed by the server — see subjectsApi.create above) — setting
   // periods/week or a preferred teacher here would target the subject's
@@ -347,6 +359,13 @@ export default function DataEntryTab({
   // sections in one of those grades (empty = no restriction, same as the
   // solver's own check in app/services/solver.py).
   const activeSectionGrade = classGroups.find((cg) => cg.id === activeSectionId)?.grade
+
+  // Eligible for the Assistant Teacher column — a standalone flag
+  // (Teacher.is_assistant_eligible, set in TeachersSection), not gated by
+  // qualified_subject_ids/qualified_grades the way the main teacher
+  // picker is. An assistant doesn't need to be independently qualified to
+  // teach the subject solo.
+  const assistantEligibleTeachers = teachers.filter((t) => t.is_assistant_eligible)
 
   const rows = subjects.filter((s) => !s._pending).map((subject) => {
     const requirement = requirements.find((r) => r.subject_id === subject.id)
@@ -361,6 +380,7 @@ export default function DataEntryTab({
       periodsPerWeek,
       qualifiedTeachers,
       preferredTeacherId: requirement?.preferred_teacher_id ?? null,
+      assistantTeacherId: requirement?.assistant_teacher_id ?? null,
       valid: periodsPerWeek > 0 && qualifiedTeachers.length > 0,
     }
   })
@@ -520,6 +540,8 @@ export default function DataEntryTab({
           onActiveSectionChange={setActiveSectionId}
           onUpdatePeriods={handleUpdatePeriods}
           onSetPreferredTeacher={handleSetPreferredTeacher}
+          assistantEligibleTeachers={assistantEligibleTeachers}
+          onSetAssistantTeacher={handleSetAssistantTeacher}
           selectedSubjectIds={selectedSubjectIds}
           onSelectedSubjectIdsChange={setSelectedSubjectIds}
           copyTargetIds={copyTargetIds}
@@ -605,6 +627,8 @@ function PlanSection({
   onActiveSectionChange,
   onUpdatePeriods,
   onSetPreferredTeacher,
+  assistantEligibleTeachers,
+  onSetAssistantTeacher,
   selectedSubjectIds,
   onSelectedSubjectIdsChange,
   copyTargetIds,
@@ -742,12 +766,13 @@ function PlanSection({
             </th>
             <th className="w-1/3 py-2 font-medium">Subject</th>
             <th className="w-32 py-2 font-medium">Periods/week</th>
+            <th className="py-2 font-medium">Assistant teacher</th>
             <th className="py-2 font-medium">Teacher</th>
             <th className="w-28 py-2 font-medium">Status</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ subject, periodsPerWeek, qualifiedTeachers, preferredTeacherId, valid }) => (
+          {rows.map(({ subject, periodsPerWeek, qualifiedTeachers, preferredTeacherId, assistantTeacherId, valid }) => (
             <tr key={subject.id} className="border-b border-slate-100">
               <td className="py-2 pr-2 align-top">
                 <input
@@ -764,6 +789,28 @@ function PlanSection({
                   onSave={(val) => onUpdatePeriods(subject.id, val)}
                   disabled={readOnly}
                 />
+              </td>
+              <td className="py-2 pr-2">
+                {assistantEligibleTeachers.length === 0 ? (
+                  <span className="text-xs text-slate-400">No eligible teachers</span>
+                ) : (
+                  <select
+                    value={assistantTeacherId ?? ''}
+                    disabled={readOnly || periodsPerWeek <= 0}
+                    onChange={(e) =>
+                      onSetAssistantTeacher(subject.id, e.target.value ? Number(e.target.value) : null)
+                    }
+                    title="An optional second teacher for this subject in this section — mark a teacher 'eligible as an assistant teacher' on the Teachers page to add them here"
+                    className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs text-slate-600 hover:bg-slate-100"
+                  >
+                    <option value="">None</option>
+                    {assistantEligibleTeachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </td>
               <td className="py-2 pr-2">
                 {qualifiedTeachers.length === 0 ? (
@@ -804,7 +851,7 @@ function PlanSection({
             <td className="py-3 pr-2"></td>
             <td className="py-3 pr-2 text-sm font-semibold">Total</td>
             <td className="py-3 pr-2 font-semibold">{totalWeeklyPeriods}</td>
-            <td colSpan={2} className="py-3 text-sm text-slate-500">
+            <td colSpan={3} className="py-3 text-sm text-slate-500">
               Total periods/week configured for the section selected above.
             </td>
           </tr>

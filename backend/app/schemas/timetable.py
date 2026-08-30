@@ -28,6 +28,8 @@ class TimetableEntryOut(BaseModel):
     subject_name: str
     teacher_id: int
     teacher_name: str
+    assistant_teacher_id: int | None = None
+    assistant_teacher_name: str | None = None
     period_id: int
     period_label: str | None
     day_of_week: int
