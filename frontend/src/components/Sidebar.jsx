@@ -76,8 +76,8 @@ export default function Sidebar({
   onRenameGrade,
   gradeOrder,
   onReorderGrades,
-  onGoToSchoolSetup,
-  schoolSetupActive = false,
+  onGoToDataEntry,
+  activeDataEntrySubView,
   readOnly = false,
 }) {
   const [expanded, setExpanded] = useState({})
@@ -194,20 +194,50 @@ export default function Sidebar({
 
       <div className="h-px bg-slate-200" />
 
-      {onGoToSchoolSetup && (
-        <button
-          onClick={onGoToSchoolSetup}
-          className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium ${
-            schoolSetupActive ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'
-          }`}
-          title="Subjects and teachers for the whole school — not tied to any one section"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none opacity-70">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-          </svg>
-          Subjects &amp; Teachers
-        </button>
+      {onGoToDataEntry && (
+        <div className="flex flex-col gap-0.5">
+          <button
+            onClick={() => onGoToDataEntry('subjects')}
+            className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium ${
+              activeDataEntrySubView === 'subjects' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+            title="What the school teaches — not tied to any one section"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none opacity-70">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            Subjects
+          </button>
+          <button
+            onClick={() => onGoToDataEntry('teachers')}
+            className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium ${
+              activeDataEntrySubView === 'teachers' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+            title="Who teaches, and which subjects they cover — not tied to any one section"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none opacity-70">
+              <circle cx="9" cy="7" r="3.5" />
+              <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+              <path d="M16.5 4.2c1.4.4 2.5 1.7 2.5 3.3s-1.1 2.9-2.5 3.3" />
+              <path d="M19 14.3c1.7.6 3 2.1 3 3.7" />
+            </svg>
+            Teachers
+          </button>
+          <button
+            onClick={() => onGoToDataEntry('setup')}
+            className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium ${
+              activeDataEntrySubView === 'setup' ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+            title="Periods and rooms — the school's foundational, one-time setup"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none opacity-70">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-1.7-1L15 3h-4l-.3 2.5a7.7 7.7 0 0 0-1.7 1l-2.4-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 1.7 1L11 21h4l.3-2.5a7.7 7.7 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5z" />
+            </svg>
+            Setup
+          </button>
+        </div>
       )}
 
       <div className="h-px bg-slate-200" />

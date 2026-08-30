@@ -491,15 +491,15 @@ function App() {
     if (subView) setDataEntrySubView(subView)
   }
 
-  // Data Entry has two distinct modes: school-wide (Subjects/Teachers,
-  // reached via the sidebar's "Subjects & Teachers" item, no section
-  // implied) and section-scoped (a section's plan, reached by clicking
-  // that section in the sidebar). Whichever mode is active determines
-  // whether the sidebar should show a section as selected — showing one
-  // while browsing the whole school's teacher list is exactly the
-  // "why does the sidebar say Section 8-B while I'm looking at every
-  // teacher" confusion this avoids.
-  const inSchoolWideDataEntry = tab === 'entry' && (dataEntrySubView === 'subjects' || dataEntrySubView === 'teachers')
+  // Data Entry has two distinct modes: school-wide (Subjects/Teachers/
+  // Setup, each reached via its own sidebar item, no section implied) and
+  // section-scoped (a section's plan, reached by clicking that section in
+  // the sidebar). Whichever mode is active determines whether the sidebar
+  // should show a section as selected — showing one while browsing the
+  // whole school's teacher list is exactly the "why does the sidebar say
+  // Section 8-B while I'm looking at every teacher" confusion this avoids.
+  const inSchoolWideDataEntry =
+    tab === 'entry' && (dataEntrySubView === 'subjects' || dataEntrySubView === 'teachers' || dataEntrySubView === 'setup')
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
@@ -524,11 +524,11 @@ function App() {
           onRenameGrade={handleRenameGrade}
           gradeOrder={selectedSchool?.grade_order}
           onReorderGrades={handleReorderGrades}
-          onGoToSchoolSetup={() => {
+          onGoToDataEntry={(subView) => {
             setTab('entry')
-            setDataEntrySubView('subjects')
+            setDataEntrySubView(subView)
           }}
-          schoolSetupActive={inSchoolWideDataEntry}
+          activeDataEntrySubView={inSchoolWideDataEntry ? dataEntrySubView : null}
           readOnly={isViewer}
         />
       ) : null}
