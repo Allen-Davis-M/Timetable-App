@@ -209,3 +209,71 @@ def test_teacher_qualified_grades_is_respected(db_session):
     assert result.status in ("optimal", "feasible"), result.errors
     assert len(result.assignments) == 2
     assert all(a["teacher_id"] == teacher.id for a in result.assignments)
+
+
+def test_assistant_teacher_is_not_double_booked(db_session):
+    """SubjectRequirement.assistant_teacher_id reserves that teacher's time
+    wherever the requirement lands — it shouldn't be possible for the
+    solver to assign an assistant to co-teach one class while also using
+    them as the sole primary teacher of a different class at the same
+    period. See the assistant_teacher_id bullet in generate_school_
+    timetable's docstring."""
+    db = db_session
+    # A single period in the whole school: Math (CG1) and English (CG2)
+    # both need exactly that one period, so if the assistant reservation
+    # isn't enforced, the solver has no reason at all to avoid landing them
+    # both there — the conflict is unavoidable, not a matter of bad luck.
+    school = _make_school_with_periods(db, days=1, periods_per_day=1)
+
+    math = Subject(school_id=school.id, name="Math")
+    english = Subject(school_id=school.id, name="English")
+    db.add_all([math, english])
+    db.commit()
+    db.refresh(math)
+    db.refresh(english)
+
+    primary = Teacher(school_id=school.id, name="Mr. Rao", qualified_subject_ids=[math.id])
+    assistant = Teacher(school_id=school.id, name="Ms. Iyer", qualified_subject_ids=[english.id])
+    db.add_all([primary, assistant])
+    db.commit()
+    db.refresh(primary)
+    db.refresh(assistant)
+
+    cg1 = ClassGroup(school_id=school.id, grade="Grade 8", name="A")
+    cg2 = ClassGroup(school_id=school.id, grade="Grade 8", name="B")
+    db.add_all([cg1, cg2])
+    db.commit()
+    db.refresh(cg1)
+    db.refresh(cg2)
+
+    db.add(SubjectRequirement(
+        class_group_id=cg1.id, subject_id=math.id, periods_per_week=1,
+        assistant_teacher_id=assistant.id,
+    ))
+    db.add(SubjectRequirement(class_group_id=cg2.id, subject_id=english.id, periods_per_week=1))
+    db.commit()
+
+    # Only one period exists and both requirements need it — Ms. Iyer would
+    # have to be in two places at once (assisting Math for CG1, teaching
+    # English for CG2), which is genuinely impossible.
+    result = generate_school_timetable(db, school.id)
+    assert result.status == "infeasible", (
+        "Expected the sole shared period to make this infeasible — the assistant "
+        "reservation isn't being enforced if this solved anyway"
+    )
+
+    # Add a second period so the two requirements *can* be separated —
+    # confirm the solver actually does separate them rather than still
+    # double-booking Ms. Iyer.
+    db.add(Period(school_id=school.id, day_of_week=0, order=1, label="D0P1"))
+    db.commit()
+
+    result = generate_school_timetable(db, school.id)
+    assert result.status in ("optimal", "feasible"), result.errors
+    assert len(result.assignments) == 2
+
+    math_entry = next(a for a in result.assignments if a["subject_id"] == math.id)
+    english_entry = next(a for a in result.assignments if a["subject_id"] == english.id)
+    assert math_entry["period_id"] != english_entry["period_id"], (
+        "Ms. Iyer was scheduled to assist Math and teach English at the same period"
+    )

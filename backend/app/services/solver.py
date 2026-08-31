@@ -124,6 +124,27 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
         (by Subject.required_room_type and Room.capacity vs. ClassGroup.
         student_count) just keep room_id=None rather than blocking
         generation.
+      - SubjectRequirement.assistant_teacher_id reserves that teacher's
+        time wherever this requirement lands: their own candidate/occ
+        variables for a period are also fed into the assistant's
+        teacher_period_vars and teacher_total_vars entries, so the
+        existing "no teacher double-booked" and "respect max periods/week"
+        constraints below cover the assistant for free, and a period where
+        the assistant is marked unavailable is excluded from this
+        requirement's eligible periods, same as it already is for the
+        primary teacher. Previously this field was purely a label copied
+        onto the generated entry (see TimetableEntry.assistant_teacher_id)
+        with no effect on the solve at all, which meant an assistant could
+        be silently double-booked between their own primary-teaching load
+        and whatever they were assisting on. Not applied to lab-batch
+        requirements (Subject.lab_batch_count >= 2) — a batch's "does a
+        session happen" variable (`occ`) isn't the same variable as any
+        one teacher's own assignment, so reserving the assistant's time
+        against `occ` directly would double-count whenever the assistant
+        also happens to be picked as one of the batch's own teachers.
+        Assigning an assistant to a batched subject is allowed but not yet
+        conflict-checked, consistent with lab batching's other known
+        limitations (see the lock-honoring note below).
 
     Constraint plumbing: teacher availability (unavailable_period_ids) and
     workload caps (max_periods_per_week) are read directly off the Teacher
@@ -303,11 +324,21 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
         batch_count = _batch_count(req)
 
         if batch_count == 1:
+            # See the docstring's assistant_teacher_id bullet above: an
+            # assistant assigned to co-teach this requirement has their
+            # time reserved wherever it lands, by feeding the same
+            # candidate variable into their own teacher_period_vars /
+            # teacher_total_vars entries below.
+            assistant_id = req.assistant_teacher_id
+            assistant = teachers_by_id.get(assistant_id) if assistant_id else None
+            assistant_unavailable = set(assistant.unavailable_period_ids or []) if assistant else set()
             for teacher_id in candidate_ids:
                 teacher = teachers_by_id[teacher_id]
                 unavailable = set(teacher.unavailable_period_ids or [])
                 for period in periods:
                     if period.id in unavailable:
+                        continue
+                    if assistant and period.id in assistant_unavailable:
                         continue
                     if period.id in restricted_periods_for_req:
                         continue
@@ -320,6 +351,14 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
                     teacher_period_vars.setdefault((teacher_id, period.id), []).append(var)
                     teacher_total_vars[teacher_id].append(var)
                     req_period_vars[req.id].setdefault(period.id, []).append(var)
+                    # Reserve the assistant's time too, unless they're
+                    # already the primary teacher for this candidate (that
+                    # would add the same var to the same list twice, which
+                    # would silently double-count it in the AddAtMostOne /
+                    # workload-cap constraints below).
+                    if assistant and assistant_id != teacher_id:
+                        teacher_period_vars.setdefault((assistant_id, period.id), []).append(var)
+                        teacher_total_vars[assistant_id].append(var)
             continue
 
         # Lab-batch splitting (Subject.lab_batch_count >= 2): this
