@@ -16,6 +16,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # actions/checkout persists the repo's own built-in GITHUB_TOKEN
+          # as git credentials by default, and that takes priority over
+          # any token embedded in a remote URL for github.com requests —
+          # so the push below was silently authenticating as
+          # github-actions[bot] (scoped only to *this* repo) instead of
+          # MIRROR_TOKEN, and getting a 403 on the other repo. Disabling
+          # this is what lets our own token actually be used.
+          persist-credentials: false
 
       - name: Push to deployment repo
         env:
