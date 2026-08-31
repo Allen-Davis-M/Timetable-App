@@ -38,48 +38,101 @@ const FEATURES = [
   {
     title: 'Save weeks of admin work every term',
     body: 'Type your scheduling rules as plain sentences instead of wrestling with spreadsheet formulas, and get a working timetable in an afternoon.',
-    icon: '✦',
+    icon: 'speed',
   },
   {
     title: 'Hand out a schedule with zero clashes',
     body: 'No teacher double-booked, no class in two places at once. Every timetable is checked against every rule before it ever reaches you.',
-    icon: '◈',
+    icon: 'shieldCheck',
   },
   {
     title: 'Go live in a day, not a week',
     body: 'Already have your teachers, subjects, and sections in a spreadsheet? Upload it and start scheduling right away, instead of re-typing everything by hand.',
-    icon: '⇪',
+    icon: 'upload',
   },
   {
     title: "Never get stuck guessing what went wrong",
     body: "When a schedule can't be built, you're told exactly which teacher or section is the problem, so it takes minutes to fix, not hours of trial and error.",
-    icon: '⚑',
+    icon: 'flag',
   },
   {
     title: 'Adapt without rebuilding from scratch',
     body: 'Lock in the parts of a schedule that already work and adjust the rest by hand. One change to one class does not mean starting over.',
-    icon: '⚙',
+    icon: 'sliders',
   },
   {
     title: 'Keep your whole staff on the same page',
     body: 'Office admins, vice principals, and teachers all see one live schedule, instead of five different spreadsheet versions emailed back and forth.',
-    icon: '⌘',
+    icon: 'users',
   },
 ]
+
+// Small line-icon set for the feature cards below, drawn in the same
+// stroke style already used for Sidebar.jsx's nav icons (24x24 viewBox,
+// stroke="currentColor", strokeWidth 2, round caps/joins) instead of the
+// Unicode glyphs (✦ ◈ ⇪ ⚑ ⚙ ⌘) this section used before — those read as
+// placeholder characters rather than a real icon system.
+const FEATURE_ICONS = {
+  speed: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
+    </svg>
+  ),
+  shieldCheck: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l7 3v5c0 5-3.2 8.5-7 10-3.8-1.5-7-5-7-10V6l7-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  ),
+  upload: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 15V4" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    </svg>
+  ),
+  flag: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 21V4" />
+      <path d="M5 4h13l-2.5 4L18 12H5" />
+    </svg>
+  ),
+  sliders: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h9" />
+      <path d="M17 6h3" />
+      <circle cx="14" cy="6" r="2" />
+      <path d="M4 12h3" />
+      <path d="M11 12h9" />
+      <circle cx="8" cy="12" r="2" />
+      <path d="M4 18h11" />
+      <path d="M19 18h1" />
+      <circle cx="17" cy="18" r="2" />
+    </svg>
+  ),
+  users: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" />
+      <circle cx="10" cy="8" r="3.5" />
+      <path d="M21 20v-1a4 4 0 0 0-2.5-3.7" />
+      <path d="M15.5 4.3a3.5 3.5 0 0 1 0 6.9" />
+    </svg>
+  ),
+}
 
 const PRICING_TIERS = [
   {
     name: 'Starter',
-    price: '₹—',
-    period: '/month',
+    price: '₹1,999',
+    period: '+ GST /month',
     tagline: 'For a single school finding its feet',
     features: ['1 school', 'Up to 500 students', 'Unlimited timetables', 'Email support'],
     highlighted: false,
   },
   {
     name: 'Growth',
-    price: '₹—',
-    period: '/month',
+    price: '₹4,999',
+    period: '+ GST /month',
     tagline: 'For schools that need more hands on deck',
     features: ['1 school', 'Unlimited students', 'Multiple admins & viewers', 'Priority support'],
     highlighted: true,
@@ -120,9 +173,8 @@ const fadeUp = {
 /**
  * A typewriter-style word cycler: types out each word in `words`
  * character by character, pauses, deletes it, then moves to the next
- * word and loops. Used in the Hero headline so "for your ___" cycles
- * through "schools" / "colleges" / "institutions" instead of picking
- * just one — matches the reference video's headline animation.
+ * word and loops. Used in the Hero headline so it cycles through
+ * "schools" / "colleges" / "institutions" instead of picking just one.
  */
 function TypingWords({ words, typingSpeedMs = 90, deletingSpeedMs = 45, pauseMs = 1400 }) {
   const [wordIndex, setWordIndex] = useState(0)
@@ -157,6 +209,7 @@ function TypingWords({ words, typingSpeedMs = 90, deletingSpeedMs = 45, pauseMs 
     </span>
   )
 }
+
 
 export default function LandingPage({ onGetStarted }) {
   return (
@@ -225,17 +278,13 @@ function Hero({ onGetStarted }) {
         <motion.div initial="hidden" animate="show" variants={fadeUp} transition={{ duration: 0.6 }}>
           {/* The cycling word sits on its own dedicated line (explicit <br/>,
               not just wrapping wherever it happens to land) so its
-              changing width can never push "Instant timetable software,"
-              onto an extra line. Without this, "institutions" (12 chars)
-              wrapping the headline from 2 lines to 3 grew the left
-              column's height, and since the hero grid uses items-center,
-              that re-centered the whole row and dragged the timetable
-              mockup on the right down with it every time the word got
-              longer, then back up when it got shorter. */}
+              changing width can never push "Instant timetables" onto an
+              extra line — see the earlier version of this component for
+              the layout-shift bug this avoids. */}
           <h1 className="text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
-            Instant timetable software,
+            Instant timetables
             <br />
-            for your <TypingWords words={['schools', 'colleges', 'institutions']} />
+            for <TypingWords words={['schools', 'colleges', 'institutions']} />
           </h1>
           <p className="mt-5 max-w-lg text-lg text-slate-500">
             Describe your scheduling rules in plain English and get a complete, ready-to-use
@@ -255,7 +304,7 @@ function Hero({ onGetStarted }) {
               See how it works
             </a>
           </div>
-          <p className="mt-4 text-xs text-slate-400">No credit card required to try it.</p>
+          <p className="mt-4 text-xs text-slate-500">No credit card required to try it.</p>
         </motion.div>
 
         <motion.div
@@ -288,18 +337,18 @@ function TimetableMockup() {
         <span className="h-2.5 w-2.5 rounded-full bg-red-300" />
         <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
         <span className="h-2.5 w-2.5 rounded-full bg-emerald-300" />
-        <span className="ml-2 text-xs text-slate-400">Grade 8 · Section A</span>
+        <span className="ml-2 text-xs text-slate-500">Grade 8 · Section A</span>
       </div>
       <div className="grid grid-cols-[36px_repeat(5,1fr)] gap-1 text-[10px]">
         <div />
         {cols.map((c) => (
-          <div key={c} className="pb-1 text-center font-medium text-slate-400">
+          <div key={c} className="pb-1 text-center font-medium text-slate-500">
             {c}
           </div>
         ))}
         {rows.map((r, ri) => (
           <Fragment key={r}>
-            <div className="flex items-center text-slate-400">{r}</div>
+            <div className="flex items-center text-slate-500">{r}</div>
             {cols.map((c, ci) => (
               <motion.div
                 key={`${r}-${c}`}
@@ -356,8 +405,8 @@ function Features() {
                 row actually ends, making rows look ragged whenever card
                 lengths weren't hand-tuned to match exactly. */}
             <GlowCard className="flex h-full flex-col rounded-xl border border-slate-200 p-6 transition-shadow hover:shadow-lg hover:shadow-slate-200/60">
-              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-lg text-white">
-                {f.icon}
+              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                {FEATURE_ICONS[f.icon]}
               </div>
               <h3 className="font-medium">{f.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-slate-500">{f.body}</p>
@@ -420,14 +469,11 @@ function Pricing({ onGetStarted }) {
         viewport={{ once: true, amount: 0.3 }}
         variants={fadeUp}
         transition={{ duration: 0.5 }}
-        className="mx-auto mb-4 max-w-2xl text-center"
+        className="mx-auto mb-10 max-w-2xl text-center"
       >
         <h2 className="text-3xl font-semibold tracking-tight">Simple pricing</h2>
         <p className="mt-3 text-slate-500">Pick what fits your school. Change or cancel anytime.</p>
       </motion.div>
-      <p className="mx-auto mb-10 max-w-md text-center text-xs text-amber-600">
-        Illustrative pricing. Final numbers to be confirmed.
-      </p>
 
       <div className="grid gap-6 md:grid-cols-3">
         {PRICING_TIERS.map((tier, i) => (
@@ -451,7 +497,7 @@ function Pricing({ onGetStarted }) {
             <p className="mt-1 text-sm text-slate-500">{tier.tagline}</p>
             <div className="mt-5 flex items-baseline gap-1">
               <span className="text-3xl font-semibold">{tier.price}</span>
-              <span className="text-sm text-slate-400">{tier.period}</span>
+              <span className="text-sm text-slate-500">{tier.period}</span>
             </div>
             <ul className="mt-6 flex flex-col gap-2.5 text-sm text-slate-600">
               {tier.features.map((f) => (
@@ -504,7 +550,7 @@ function Testimonials() {
               className="rounded-xl border border-slate-200 bg-white p-6"
             >
               <p className="text-sm leading-relaxed text-slate-600">"{t.quote}"</p>
-              <p className="mt-4 text-xs font-medium text-slate-400">{t.role}</p>
+              <p className="mt-4 text-xs font-medium text-slate-500">{t.role}</p>
             </motion.div>
           ))}
         </div>
@@ -516,7 +562,7 @@ function Testimonials() {
 function Footer() {
   return (
     <footer className="border-t border-slate-100 py-10">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-400 md:flex-row">
+      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-500 md:flex-row">
         <span>© {new Date().getFullYear()} Timetable. All rights reserved.</span>
         <span>Made for schools & colleges, not spreadsheets.</span>
       </div>

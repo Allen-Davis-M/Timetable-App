@@ -4,6 +4,22 @@ body {
   margin: 0;
 }
 
+/* Brand-themed browser surfaces: without these, text selection and the
+   keyboard focus ring fall back to the browser's default blue, which reads
+   as unfinished against the indigo palette used everywhere else. Additive
+   only — elements that already set their own focus treatment (most inputs
+   use `focus:outline-none` plus a border-color change) are unaffected,
+   since a utility class's specificity wins over this tag-level rule. */
+::selection {
+  background-color: #c7d2fe; /* indigo-200 */
+  color: #1e1b4b; /* indigo-950, keeps selected text readable */
+}
+
+:focus-visible {
+  outline: 2px solid #6366f1; /* indigo-500 */
+  outline-offset: 2px;
+}
+
 /* Marquee + glow keyframes for LandingPage.jsx's Aceternity/Magic-UI-style
    flourishes (see components/Marquee.jsx, components/Spotlight.jsx).
    Tailwind v4 is CSS-first (no tailwind.config.js keyframes block), so

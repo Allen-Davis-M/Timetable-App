@@ -145,7 +145,7 @@ export default function AuthPage({ onAuthenticated, onBack }) {
             ) : (
               <div className="mb-4 flex justify-center" ref={googleButtonRef} />
             )}
-            <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+            <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
               <div className="h-px flex-1 bg-slate-200" />
               or
               <div className="h-px flex-1 bg-slate-200" />

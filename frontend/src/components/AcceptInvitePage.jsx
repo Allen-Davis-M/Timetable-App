@@ -54,7 +54,13 @@ export default function AcceptInvitePage({ token, onAccepted }) {
     )
   }
 
-  if (!preview) return null
+  if (!preview) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-8">
