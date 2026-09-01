@@ -33,3 +33,9 @@ class SchoolOut(BaseModel):
 
 class SchoolGradeOrderUpdate(BaseModel):
     grade_order: list[str]
+
+
+class SchoolInstitutionTypeUpdate(BaseModel):
+    # Same "not a strict enum" reasoning as SchoolCreate.institution_type —
+    # the frontend only ever sends "school" or "college".
+    institution_type: str | None = None

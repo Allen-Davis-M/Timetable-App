@@ -1,0 +1,24 @@
+# Normalizes line endings so a Windows checkout (this project is edited
+# from a OneDrive-synced folder on Windows) doesn't turn every text file
+# into a diff of CRLF vs. the repo's LF the moment it's opened and saved.
+# `eol=lf` forces LF in the working tree on every platform, not just what
+# gets committed, so this fixes it for any fresh clone too, not just this
+# one. Existing already-committed files won't be rewritten just by adding
+# this file — see the renormalize step below.
+* text=auto eol=lf
+
+# Binary files some tooling might add later — never touched by line-ending
+# normalization regardless of what `text=auto` would otherwise guess.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
+*.woff binary
+*.woff2 binary

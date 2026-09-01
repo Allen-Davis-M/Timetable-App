@@ -25,7 +25,7 @@ from app.core.database import get_db
 from app.models.school import School, SchoolInvite, SchoolMembership
 from app.models.user import User
 from app.schemas.membership import InviteCreate, InviteOut, MemberOut, MemberRoleUpdate
-from app.schemas.school import SchoolCreate, SchoolGradeOrderUpdate, SchoolOut
+from app.schemas.school import SchoolCreate, SchoolGradeOrderUpdate, SchoolInstitutionTypeUpdate, SchoolOut
 
 router = APIRouter(prefix="/api/schools", tags=["schools"])
 
@@ -101,6 +101,31 @@ def update_grade_order(
     role = require_school_access(db, current_user, school_id, min_role="admin")
     school = db.get(School, school_id)
     school.grade_order = payload.grade_order
+    db.commit()
+    db.refresh(school)
+    return SchoolOut(
+        id=school.id, name=school.name, institution_type=school.institution_type,
+        grade_order=school.grade_order, role=role,
+    )
+
+
+@router.put("/{school_id}/institution-type", response_model=SchoolOut)
+def update_institution_type(
+    school_id: int, payload: SchoolInstitutionTypeUpdate,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """
+    Lets an admin fix a school's school-vs-college label after creation —
+    previously this was only ever set once, in the create-school modal,
+    with no way to change it (see docs/ARCHITECTURE.md's "School vs.
+    college" section). Purely cosmetic, same as at creation time: this
+    never gates or removes any existing data (class groups, lab-batch
+    settings, credits) — it only changes which placeholder wording and
+    which college-only fields the frontend shows going forward.
+    """
+    role = require_school_access(db, current_user, school_id, min_role="admin")
+    school = db.get(School, school_id)
+    school.institution_type = payload.institution_type
     db.commit()
     db.refresh(school)
     return SchoolOut(

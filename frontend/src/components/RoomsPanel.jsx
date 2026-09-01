@@ -15,7 +15,7 @@ import { useState } from 'react'
  * loaded school-wide, so a second independent fetch on mount was pure
  * extra latency for data the app already had.
  */
-export default function RoomsPanel({ schoolId, rooms, onCreate, onDelete }) {
+export default function RoomsPanel({ schoolId, rooms, onCreate, onDelete, readOnly = false }) {
   const [name, setName] = useState('')
   const [capacity, setCapacity] = useState('')
   const [roomType, setRoomType] = useState('')
@@ -57,31 +57,33 @@ export default function RoomsPanel({ schoolId, rooms, onCreate, onDelete }) {
         assignment is simply skipped.
       </p>
 
-      <form onSubmit={handleAdd} className="mb-4 flex flex-wrap gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Room name (e.g. Lab 1)"
-          className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        />
-        <input
-          value={capacity}
-          onChange={(e) => setCapacity(e.target.value)}
-          type="number"
-          min="0"
-          placeholder="Capacity"
-          className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        />
-        <input
-          value={roomType}
-          onChange={(e) => setRoomType(e.target.value)}
-          placeholder="Type (e.g. lab, regular)"
-          className="w-44 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        />
-        <button className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-          Add
-        </button>
-      </form>
+      {!readOnly && (
+        <form onSubmit={handleAdd} className="mb-4 flex flex-wrap gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Room name (e.g. Lab 1)"
+            className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          />
+          <input
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            type="number"
+            min="0"
+            placeholder="Capacity"
+            className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          />
+          <input
+            value={roomType}
+            onChange={(e) => setRoomType(e.target.value)}
+            placeholder="Type (e.g. lab, regular)"
+            className="w-44 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          />
+          <button className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            Add
+          </button>
+        </form>
+      )}
 
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
 
@@ -93,12 +95,14 @@ export default function RoomsPanel({ schoolId, rooms, onCreate, onDelete }) {
               {r.room_type ? ` · ${r.room_type}` : ''}
               {r.capacity ? ` · capacity ${r.capacity}` : ''}
             </span>
-            <button
-              onClick={() => handleDelete(r.id)}
-              className="text-xs text-slate-400 hover:text-red-600"
-            >
-              Remove
-            </button>
+            {!readOnly && (
+              <button
+                onClick={() => handleDelete(r.id)}
+                className="text-xs text-slate-400 hover:text-red-600"
+              >
+                Remove
+              </button>
+            )}
           </li>
         ))}
         {rooms.length === 0 && <p className="py-2 text-sm text-slate-500">No rooms yet.</p>}

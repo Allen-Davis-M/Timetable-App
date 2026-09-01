@@ -307,7 +307,16 @@ function ConstraintCard({
       )}
 
       {!c.enforced && (
-        <p className="mt-2 text-xs text-amber-600">Not yet enforced by the solver</p>
+        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 flex-none">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+          <span>
+            Saved, but not applied when generating — this won't affect the timetable.
+          </span>
+        </div>
       )}
       {c.conflicts && c.conflicts.length > 0 && (
         <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-red-600">

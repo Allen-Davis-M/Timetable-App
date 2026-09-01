@@ -58,6 +58,34 @@ def _class_group_label(cg: ClassGroup) -> str:
     return f"{cg.grade} - {cg.name}" if cg.grade else cg.name
 
 
+def _candidate_teacher_ids(
+    req: SubjectRequirement,
+    teachers: list[Teacher],
+    teachers_by_id: dict[int, Teacher],
+    class_groups_by_id: dict[int, ClassGroup],
+) -> list[int]:
+    """Which teachers could even be assigned to this requirement, ignoring
+    period-level availability — qualification, grade restriction, and an
+    explicit preferred-teacher pin (which bypasses both). Factored out so
+    the main solve and _diagnose_constraint_conflicts's separate model
+    below can't silently drift apart on what "qualified" means."""
+    req_class_group = class_groups_by_id.get(req.class_group_id)
+    req_grade = req_class_group.grade if req_class_group else None
+    if req.preferred_teacher_id:
+        return [req.preferred_teacher_id] if req.preferred_teacher_id in teachers_by_id else []
+    return [
+        t.id for t in teachers
+        if req.subject_id in (t.qualified_subject_ids or [])
+        and (not (t.qualified_grades or []) or not req_grade or req_grade in t.qualified_grades)
+    ]
+
+
+def _is_batched(req: SubjectRequirement, subjects_by_id: dict[int, "Subject"]) -> bool:
+    subject = subjects_by_id.get(req.subject_id)
+    n = subject.lab_batch_count if subject else None
+    return isinstance(n, int) and n >= 2
+
+
 def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResult:
     """
     Build a CP-SAT model from a school's real data and solve it.
@@ -286,25 +314,10 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
         return n if isinstance(n, int) and n >= 2 else 1
 
     for req in requirements:
-        req_class_group = class_groups_by_id.get(req.class_group_id)
-        req_grade = req_class_group.grade if req_class_group else None
-        if req.preferred_teacher_id:
-            # An explicit pin is an admin override — same as it already
-            # bypasses the subject-qualification check below, it bypasses
-            # the grade check too, rather than silently failing to honor a
-            # pin the admin set deliberately.
-            candidate_ids = [req.preferred_teacher_id] if req.preferred_teacher_id in teachers_by_id else []
-        else:
-            candidate_ids = [
-                t.id for t in teachers
-                if req.subject_id in (t.qualified_subject_ids or [])
-                # Empty qualified_grades = no restriction (teaches every
-                # grade) — see Teacher.qualified_grades' docstring. Only
-                # class groups with a grade set can be checked against it;
-                # a class group with no grade label never excludes a
-                # grade-restricted teacher purely for lacking one.
-                and (not (t.qualified_grades or []) or not req_grade or req_grade in t.qualified_grades)
-            ]
+        # Qualification/grade/preferred-teacher-pin logic lives in
+        # _candidate_teacher_ids so this and _diagnose_constraint_conflicts'
+        # separate model below can't drift apart on what "qualified" means.
+        candidate_ids = _candidate_teacher_ids(req, teachers, teachers_by_id, class_groups_by_id)
         candidate_ids_by_req[req.id] = candidate_ids
 
         if not candidate_ids:
@@ -683,6 +696,18 @@ def generate_school_timetable(db: Session, school_id: int) -> TimetableSolveResu
             req_restricted_periods, req_required_periods, candidate_ids_by_req,
             subjects_by_id, class_groups_by_id,
         )
+        # Only reachable for a *proven* infeasibility (not "unknown", a
+        # timeout) — SufficientAssumptionsForInfeasibility() needs CP-SAT to
+        # have actually established there's no solution, not just failed to
+        # find one in time. Only attempted when the cheap checks above found
+        # nothing, since they're strictly cheaper and more specific when
+        # they do apply.
+        if not errors and status_name == "infeasible":
+            errors = errors + _diagnose_constraint_conflicts(
+                db, school_id, requirements, teachers, teachers_by_id, periods,
+                periods_by_day, first_period_ids, last_period_ids, period_ids_by_day,
+                class_groups_by_id, subjects_by_id, class_groups,
+            )
 
     return TimetableSolveResult(status=status_name, assignments=assignments, locked_keys=locked_keys, errors=errors)
 
@@ -785,6 +810,299 @@ def _diagnose_infeasibility(
             )
 
     return messages
+
+
+def _diagnose_constraint_conflicts(
+    db: Session,
+    school_id: int,
+    requirements: list[SubjectRequirement],
+    teachers: list[Teacher],
+    teachers_by_id: dict[int, Teacher],
+    periods: list[Period],
+    periods_by_day: dict[int, list[Period]],
+    first_period_ids: set[int],
+    last_period_ids: set[int],
+    period_ids_by_day: dict[int, set[int]],
+    class_groups_by_id: dict[int, ClassGroup],
+    subjects_by_id: dict[int, Subject],
+    class_groups: list[ClassGroup],
+) -> list[str]:
+    """
+    Follow-up to _diagnose_infeasibility, for the one class of cause that
+    function can't see: two or more admin-authored Constraint rows
+    (placement/day restrictions, consecutive-period caps, subject
+    sequencing, subject spacing) that are each individually fine but can't
+    all hold at once together — e.g. two different subjects both required
+    into the same class group's first period, each fine alone, impossible
+    together. docs/ARCHITECTURE.md names exactly this as the thing the
+    cheap single-cause checks deliberately don't cover.
+
+    Approach: rebuild a second, smaller CP-SAT model where every
+    conflict-capable Constraint row is guarded by its own boolean
+    "assumption" literal (CpModel.AddAssumptions) instead of being
+    unconditionally true. Solving with every assumption asked-true is
+    exactly equivalent to the real model's behavior when everything's
+    satisfiable — so if this comes back infeasible, CP-SAT's
+    SufficientAssumptionsForInfeasibility() returns a genuinely sufficient
+    (not necessarily the single smallest possible, but always a real,
+    checkable) subset of those literals that can't all hold together,
+    which is mapped back to the actual Constraint rows for the message.
+
+    If this second model turns out satisfiable, or the solve times out
+    inconclusively, this returns an empty list rather than guessing — the
+    original infeasibility must then be caused by something this pass
+    doesn't model (kept deliberately narrower than the main solve; see the
+    lab-batch exclusion below), and the caller falls back to its generic
+    "couldn't automatically identify the cause" message, same as it
+    already does when _diagnose_infeasibility finds nothing.
+
+    Kept as an entirely separate model from the main solve in
+    generate_school_timetable — not a modification of it — specifically so
+    this only runs, and can only ever affect anything, on the failure path.
+    The main solve's happy-path behavior and performance (already
+    stress-tested to 200 sections) is completely unchanged by this
+    function's existence.
+
+    Deliberately excludes lab-batch requirements (Subject.lab_batch_count
+    >= 2): a batch's "does a session happen" occupancy variable isn't a
+    per-teacher assignment the way every other variable in this pass is, so
+    reserving assistant time or reasoning about it the same way would need
+    the same batch-specific modeling the main solve uses. If the only real
+    conflict involves a batched subject, this pass simply won't find it and
+    returns an empty list rather than fabricating a wrong answer.
+    """
+    conflict_types = (
+        "no_subject_period", "require_subject_period",
+        "no_subject_day", "require_subject_day",
+        "max_consecutive_periods", "subject_sequence", "min_gap_between_subjects",
+    )
+    rule_constraints = (
+        db.query(Constraint)
+        .filter(
+            Constraint.school_id == school_id,
+            Constraint.type.in_(conflict_types),
+            Constraint.is_hard.is_(True),
+        )
+        .all()
+    )
+    if not rule_constraints:
+        return []  # nothing optional to blame; the cause is elsewhere
+
+    def _applies_to(constraint_params: dict, req: SubjectRequirement) -> bool:
+        if constraint_params.get("subject_id") != req.subject_id:
+            return False
+        class_group_ids = constraint_params.get("class_group_ids")
+        return not class_group_ids or req.class_group_id in class_group_ids
+
+    non_batched = [r for r in requirements if not _is_batched(r, subjects_by_id)]
+    if not non_batched:
+        return []
+
+    model = cp_model.CpModel()
+    x: dict[tuple[int, int, int], cp_model.IntVar] = {}
+    requirement_vars: dict[int, list] = {r.id: [] for r in non_batched}
+    class_group_period_vars: dict[tuple[int, int], list] = {}
+    teacher_period_vars: dict[tuple[int, int], list] = {}
+    teacher_total_vars: dict[int, list] = {t.id: [] for t in teachers}
+    req_period_vars: dict[int, dict[int, list]] = {r.id: {} for r in non_batched}
+
+    for req in non_batched:
+        candidate_ids = _candidate_teacher_ids(req, teachers, teachers_by_id, class_groups_by_id)
+        if not candidate_ids:
+            # A missing-qualified-teacher cause — _diagnose_infeasibility
+            # (or the main solve's own upfront check) already reports this
+            # specifically; this pass has nothing useful to add.
+            return []
+
+        assistant_id = req.assistant_teacher_id
+        assistant = teachers_by_id.get(assistant_id) if assistant_id else None
+        assistant_unavailable = set(assistant.unavailable_period_ids or []) if assistant else set()
+
+        for teacher_id in candidate_ids:
+            teacher = teachers_by_id[teacher_id]
+            unavailable = set(teacher.unavailable_period_ids or [])
+            for period in periods:
+                if period.id in unavailable:
+                    continue
+                if assistant and period.id in assistant_unavailable:
+                    continue
+                var = model.NewBoolVar(f"cx_r{req.id}_t{teacher_id}_p{period.id}")
+                x[(req.id, teacher_id, period.id)] = var
+                requirement_vars[req.id].append(var)
+                class_group_period_vars.setdefault((req.class_group_id, period.id), []).append(var)
+                teacher_period_vars.setdefault((teacher_id, period.id), []).append(var)
+                teacher_total_vars[teacher_id].append(var)
+                req_period_vars[req.id].setdefault(period.id, []).append(var)
+                if assistant and assistant_id != teacher_id:
+                    teacher_period_vars.setdefault((assistant_id, period.id), []).append(var)
+                    teacher_total_vars[assistant_id].append(var)
+
+    for req in non_batched:
+        if requirement_vars[req.id]:
+            model.Add(sum(requirement_vars[req.id]) == req.periods_per_week)
+    for group_vars in class_group_period_vars.values():
+        model.AddAtMostOne(group_vars)
+    for group_vars in teacher_period_vars.values():
+        model.AddAtMostOne(group_vars)
+    for teacher in teachers:
+        if teacher.max_periods_per_week is not None and teacher_total_vars[teacher.id]:
+            model.Add(sum(teacher_total_vars[teacher.id]) <= teacher.max_periods_per_week)
+
+    req_by_class_subject = {(r.class_group_id, r.subject_id): r for r in non_batched}
+    sorted_periods_by_day = {day: sorted(dp, key=lambda p: p.order) for day, dp in periods_by_day.items()}
+
+    assumptions: list[cp_model.IntVar] = []
+    # Keyed by the assumption BoolVar's model-internal index (var.Index()),
+    # not its position in the `assumptions` list — that's what
+    # SufficientAssumptionsForInfeasibility() actually returns below, and
+    # the two aren't the same number once other variables exist in the
+    # model (verified directly against the ortools API before relying on
+    # it here).
+    assumption_constraints: dict[int, Constraint] = {}
+
+    for c in rule_constraints:
+        p = c.parameters or {}
+        contributed = False
+
+        if c.type in ("no_subject_period", "require_subject_period", "no_subject_day", "require_subject_day"):
+            is_ban = c.type in ("no_subject_period", "no_subject_day")
+            assume = model.NewBoolVar(f"assume_c{c.id}")
+            for req in non_batched:
+                if not _applies_to(p, req):
+                    continue
+                if c.type in ("no_subject_period", "require_subject_period"):
+                    position = p.get("position")
+                    if position not in ("first", "last"):
+                        continue
+                    matched = first_period_ids if position == "first" else last_period_ids
+                else:
+                    day_of_week = p.get("day_of_week")
+                    if not isinstance(day_of_week, int):
+                        continue
+                    matched = period_ids_by_day.get(day_of_week, set())
+                per_period = req_period_vars.get(req.id, {})
+                zero_period_ids = matched if is_ban else (set(per_period.keys()) - matched)
+                for period_id in zero_period_ids:
+                    for var in per_period.get(period_id, []):
+                        model.Add(var == 0).OnlyEnforceIf(assume)
+                        contributed = True
+        elif c.type == "max_consecutive_periods":
+            assume = model.NewBoolVar(f"assume_c{c.id}")
+            max_consecutive = p.get("max_consecutive")
+            if isinstance(max_consecutive, int) and max_consecutive >= 1:
+                teacher_id = p.get("teacher_id")
+                if teacher_id is not None:
+                    for day_periods in sorted_periods_by_day.values():
+                        if len(day_periods) <= max_consecutive:
+                            continue
+                        for start in range(len(day_periods) - max_consecutive):
+                            window = day_periods[start:start + max_consecutive + 1]
+                            window_vars = [v for wp in window for v in teacher_period_vars.get((teacher_id, wp.id), [])]
+                            if window_vars:
+                                model.Add(sum(window_vars) <= max_consecutive).OnlyEnforceIf(assume)
+                                contributed = True
+                else:
+                    for req in non_batched:
+                        if not _applies_to(p, req):
+                            continue
+                        per_period_vars = req_period_vars.get(req.id, {})
+                        for day_periods in sorted_periods_by_day.values():
+                            if len(day_periods) <= max_consecutive:
+                                continue
+                            for start in range(len(day_periods) - max_consecutive):
+                                window = day_periods[start:start + max_consecutive + 1]
+                                window_vars = [v for wp in window for v in per_period_vars.get(wp.id, [])]
+                                if window_vars:
+                                    model.Add(sum(window_vars) <= max_consecutive).OnlyEnforceIf(assume)
+                                    contributed = True
+        elif c.type == "subject_sequence":
+            assume = model.NewBoolVar(f"assume_c{c.id}")
+            first_subject_id = p.get("first_subject_id")
+            second_subject_id = p.get("second_subject_id")
+            if first_subject_id and second_subject_id:
+                class_group_ids = p.get("class_group_ids") or [cg.id for cg in class_groups]
+                for cg_id in class_group_ids:
+                    req1 = req_by_class_subject.get((cg_id, first_subject_id))
+                    req2 = req_by_class_subject.get((cg_id, second_subject_id))
+                    if not req1 or not req2:
+                        continue
+                    for day_periods in sorted_periods_by_day.values():
+                        for i in range(len(day_periods) - 1):
+                            period, next_period = day_periods[i], day_periods[i + 1]
+                            first_vars = req_period_vars.get(req1.id, {}).get(period.id, [])
+                            second_vars = req_period_vars.get(req2.id, {}).get(next_period.id, [])
+                            if first_vars and second_vars:
+                                model.Add(sum(first_vars) + sum(second_vars) <= 1).OnlyEnforceIf(assume)
+                                contributed = True
+        elif c.type == "min_gap_between_subjects":
+            assume = model.NewBoolVar(f"assume_c{c.id}")
+            first_subject_id = p.get("first_subject_id")
+            second_subject_id = p.get("second_subject_id")
+            min_gap = p.get("min_gap")
+            if first_subject_id and second_subject_id and isinstance(min_gap, int) and min_gap >= 1:
+                class_group_ids = p.get("class_group_ids") or [cg.id for cg in class_groups]
+                for cg_id in class_group_ids:
+                    req1 = req_by_class_subject.get((cg_id, first_subject_id))
+                    req2 = req_by_class_subject.get((cg_id, second_subject_id))
+                    if not req1 or not req2:
+                        continue
+                    for day_periods in sorted_periods_by_day.values():
+                        for p1 in day_periods:
+                            p1_vars = req_period_vars.get(req1.id, {}).get(p1.id, [])
+                            if not p1_vars:
+                                continue
+                            for p2 in day_periods:
+                                if abs(p1.order - p2.order) >= min_gap:
+                                    continue
+                                p2_vars = req_period_vars.get(req2.id, {}).get(p2.id, [])
+                                if p2_vars:
+                                    model.Add(sum(p1_vars) + sum(p2_vars) <= 1).OnlyEnforceIf(assume)
+                                    contributed = True
+        else:
+            continue
+
+        if contributed:
+            assumptions.append(assume)
+            assumption_constraints[assume.Index()] = c
+
+    if len(assumptions) < 2:
+        # Can't have a *multi*-constraint conflict with fewer than two
+        # candidates — either nothing here applies to this school's actual
+        # requirements, or there's only one, which would already have to be
+        # a structural issue the cheap checks above should have caught.
+        return []
+
+    model.AddAssumptions(assumptions)
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = min(8, max(1, os.cpu_count() or 1))
+    # A diagnostic pass on an already-failed generation — doesn't need
+    # anywhere near the main solve's time budget.
+    solver.parameters.max_time_in_seconds = min(15, settings.solver_time_limit_seconds)
+    status = solver.Solve(model)
+
+    if status != cp_model.INFEASIBLE:
+        # Either genuinely satisfiable once the admin rules are only
+        # *tried* rather than unconditionally forced (meaning they aren't
+        # actually the cause), or the solve timed out inconclusively —
+        # either way, this pass can't honestly name a cause, so it stays
+        # silent rather than guessing.
+        return []
+
+    conflicting_indices = solver.SufficientAssumptionsForInfeasibility()
+    conflicting = [assumption_constraints[i] for i in conflicting_indices if i in assumption_constraints]
+    if len(conflicting) < 2:
+        # A single constraint "conflicting" with nothing else would really
+        # be a structural issue the cheap checks above should have already
+        # caught — not the multi-constraint interaction this pass exists
+        # for. Stay silent rather than blaming one rule for something it
+        # isn't solely responsible for.
+        return []
+
+    descriptions = ", ".join(f"\"{c.description}\"" for c in conflicting)
+    return [
+        f"These {len(conflicting)} constraints can't all be satisfied together: {descriptions} — "
+        f"loosen or remove at least one of them and regenerate."
+    ]
 
 
 def _assign_rooms(

@@ -62,6 +62,7 @@ function sortGradeKeys(keys, gradeOrder) {
 export default function Sidebar({
   schoolName,
   institutionType,
+  onUpdateInstitutionType,
   schools,
   selectedSchoolId,
   onSelectSchool,
@@ -99,6 +100,10 @@ export default function Sidebar({
   // different grade are the same "correct this section" action to an
   // admin, not two separate features.
   const [editingSectionId, setEditingSectionId] = useState(null)
+  // Whether the school/college pill next to the school switcher has
+  // swapped for its own tiny dropdown — see the institution-type block
+  // near the top of the render below.
+  const [editingType, setEditingType] = useState(false)
   // Optimistic override for gradeOrder, used only while a reorder is
   // in flight. Without this, every up/down click waited on a full
   // round trip to the server (through Railway, then Supabase) before
@@ -188,7 +193,37 @@ export default function Sidebar({
           ) : (
             <div className="truncate text-sm font-semibold leading-tight">{schoolName}</div>
           )}
-          <div className="text-xs text-slate-500">Admin</div>
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span>Admin</span>
+            <span className="text-slate-300">·</span>
+            {editingType ? (
+              <select
+                autoFocus
+                value={institutionType || 'school'}
+                onChange={(e) => {
+                  onUpdateInstitutionType?.(e.target.value)
+                  setEditingType(false)
+                }}
+                onBlur={() => setEditingType(false)}
+                className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs focus:outline-none"
+              >
+                <option value="school">School</option>
+                <option value="college">College</option>
+              </select>
+            ) : (
+              !readOnly && onUpdateInstitutionType ? (
+                <button
+                  onClick={() => setEditingType(true)}
+                  className="underline decoration-dotted underline-offset-2 hover:text-slate-700"
+                  title="Change whether this is set up as a school or a college"
+                >
+                  {institutionType === 'college' ? 'College' : 'School'}
+                </button>
+              ) : (
+                <span>{institutionType === 'college' ? 'College' : 'School'}</span>
+              )
+            )}
+          </div>
         </div>
       </div>
 

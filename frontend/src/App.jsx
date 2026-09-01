@@ -376,6 +376,22 @@ function App() {
     }
   }
 
+  // Lets an admin fix a school's school-vs-college label after creation —
+  // previously only set once, in the create-school modal, with no way to
+  // change it and no indicator anywhere showing which one a school was
+  // (see docs/ARCHITECTURE.md's "School vs. college" section). Same
+  // local-patch pattern as handleReorderGrades above: this can't have
+  // changed anything else, so there's no need for a full reload.
+  async function handleUpdateInstitutionType(newType) {
+    try {
+      const updated = await api.updateSchoolInstitutionType(selectedSchoolId, newType)
+      setSchools((prev) => prev.map((s) => (s.id === selectedSchoolId ? updated : s)))
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   async function handleDeleteClassGroup(classGroup) {
     const label = classGroup.grade ? `${classGroup.grade} - ${classGroup.name}` : classGroup.name
     if (
@@ -507,6 +523,7 @@ function App() {
         <Sidebar
           schoolName={selectedSchool?.name}
           institutionType={selectedSchool?.institution_type}
+          onUpdateInstitutionType={handleUpdateInstitutionType}
           schools={schools}
           selectedSchoolId={selectedSchoolId}
           onSelectSchool={setSelectedSchoolId}
@@ -693,6 +710,7 @@ function App() {
                       classGroups={classGroups}
                       teachers={teachers}
                       periods={periods}
+                      constraints={constraints}
                       timetable={timetable}
                       setTimetable={setTimetable}
                       generating={generating}

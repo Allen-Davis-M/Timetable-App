@@ -277,3 +277,55 @@ def test_assistant_teacher_is_not_double_booked(db_session):
     assert math_entry["period_id"] != english_entry["period_id"], (
         "Ms. Iyer was scheduled to assist Math and teach English at the same period"
     )
+
+
+def test_multi_constraint_conflict_is_named(db_session):
+    """Two different subjects each individually-fine 'require first period'
+    rules for the same class group, together impossible (a class group can
+    only have one subject per period) — the exact scenario
+    docs/ARCHITECTURE.md names as something _diagnose_infeasibility's
+    single-cause checks can't see. _diagnose_constraint_conflicts should
+    name both constraints specifically instead of falling back to the
+    generic 'couldn't automatically identify the cause' message."""
+    db = db_session
+    school = _make_school_with_periods(db, days=1, periods_per_day=2)
+
+    math = Subject(school_id=school.id, name="Math")
+    pe = Subject(school_id=school.id, name="PE")
+    db.add_all([math, pe])
+    db.commit()
+    db.refresh(math)
+    db.refresh(pe)
+
+    math_teacher = Teacher(school_id=school.id, name="Mr. Rao", qualified_subject_ids=[math.id])
+    pe_teacher = Teacher(school_id=school.id, name="Coach Iyer", qualified_subject_ids=[pe.id])
+    db.add_all([math_teacher, pe_teacher])
+    db.commit()
+
+    cg = ClassGroup(school_id=school.id, grade="Grade 8", name="A")
+    db.add(cg)
+    db.commit()
+    db.refresh(cg)
+
+    db.add(SubjectRequirement(class_group_id=cg.id, subject_id=math.id, periods_per_week=1))
+    db.add(SubjectRequirement(class_group_id=cg.id, subject_id=pe.id, periods_per_week=1))
+    db.add(Constraint(
+        school_id=school.id, type="require_subject_period",
+        parameters={"subject_id": math.id, "position": "first"}, is_hard=True,
+        description="Math must be in the first period",
+    ))
+    db.add(Constraint(
+        school_id=school.id, type="require_subject_period",
+        parameters={"subject_id": pe.id, "position": "first"}, is_hard=True,
+        description="PE must be in the first period",
+    ))
+    db.commit()
+
+    result = generate_school_timetable(db, school.id)
+
+    assert result.status == "infeasible"
+    assert len(result.errors) == 1
+    message = result.errors[0]
+    assert "Math must be in the first period" in message
+    assert "PE must be in the first period" in message
+    assert "can't all be satisfied together" in message

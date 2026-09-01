@@ -15,7 +15,7 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
  * extra round trip (and the visible cause of a beat of blank/stale periods
  * every time the Setup page was opened) for data the app already had.
  */
-export default function PeriodsPanel({ schoolId, periods, onCreate, onDelete }) {
+export default function PeriodsPanel({ schoolId, periods, onCreate, onDelete, readOnly = false }) {
   const [dayOfWeek, setDayOfWeek] = useState(0)
   const [order, setOrder] = useState('')
   const [label, setLabel] = useState('')
@@ -54,35 +54,37 @@ export default function PeriodsPanel({ schoolId, periods, onCreate, onDelete }) 
         slot the school actually teaches in.
       </p>
 
-      <form onSubmit={handleAdd} className="mb-4 flex flex-wrap gap-2">
-        <select
-          value={dayOfWeek}
-          onChange={(e) => setDayOfWeek(e.target.value)}
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        >
-          {DAY_NAMES.map((d, i) => (
-            <option key={i} value={i}>
-              {d}
-            </option>
-          ))}
-        </select>
-        <input
-          value={order}
-          onChange={(e) => setOrder(e.target.value)}
-          placeholder="Order (1, 2, 3…)"
-          type="number"
-          className="w-36 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        />
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="Label (e.g. 9:00-9:45)"
-          className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-        />
-        <button className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-          Add
-        </button>
-      </form>
+      {!readOnly && (
+        <form onSubmit={handleAdd} className="mb-4 flex flex-wrap gap-2">
+          <select
+            value={dayOfWeek}
+            onChange={(e) => setDayOfWeek(e.target.value)}
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          >
+            {DAY_NAMES.map((d, i) => (
+              <option key={i} value={i}>
+                {d}
+              </option>
+            ))}
+          </select>
+          <input
+            value={order}
+            onChange={(e) => setOrder(e.target.value)}
+            placeholder="Order (1, 2, 3…)"
+            type="number"
+            className="w-36 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          />
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (e.g. 9:00-9:45)"
+            className="flex-1 min-w-[160px] rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+          />
+          <button className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            Add
+          </button>
+        </form>
+      )}
 
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
 
@@ -93,12 +95,14 @@ export default function PeriodsPanel({ schoolId, periods, onCreate, onDelete }) 
               {DAY_NAMES[p.day_of_week]} · #{p.order}
               {p.label ? ` · ${p.label}` : ''}
             </span>
-            <button
-              onClick={() => handleDelete(p.id)}
-              className="text-xs text-slate-400 hover:text-red-600"
-            >
-              Remove
-            </button>
+            {!readOnly && (
+              <button
+                onClick={() => handleDelete(p.id)}
+                className="text-xs text-slate-400 hover:text-red-600"
+              >
+                Remove
+              </button>
+            )}
           </li>
         ))}
         {periods.length === 0 && (

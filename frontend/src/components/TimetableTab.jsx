@@ -65,6 +65,7 @@ export default function TimetableTab({
   // generation is in progress — even while the admin is on a different
   // tab — so there's nothing left here that a remount can lose.
   periods,
+  constraints = [],
   timetable,
   setTimetable,
   generating,
@@ -72,6 +73,17 @@ export default function TimetableTab({
   onPollUntilDone,
   readOnly = false,
 }) {
+  // Constraints saved on the Constraints tab that the solver doesn't
+  // actually apply — most commonly the "scheduling_rule" catch-all for
+  // free-text rules the parser couldn't map to a real constraint type
+  // (see generate_school_timetable's docstring in
+  // backend/app/services/solver.py), but any constraint's `enforced` flag
+  // can come back false (e.g. an availability rule where no day was
+  // recognized). Surfaced here, right before Generate, rather than only on
+  // the Constraints tab itself — an admin who set up rules earlier and
+  // comes straight to Timetable to generate would otherwise have no reason
+  // to suspect some of them are silently no-ops.
+  const unenforcedConstraints = constraints.filter((c) => !c.enforced)
   const [page, setPage] = useState('schedule') // 'schedule' | 'substitutions'
   const [view, setView] = useState('section') // 'section' | 'teacher'
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id ?? null)
@@ -272,6 +284,24 @@ export default function TimetableTab({
       </div>
 
       <div className="h-px bg-slate-200" />
+
+      {unenforcedConstraints.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 flex-none">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+          <span>
+            {unenforcedConstraints.length === 1
+              ? "1 saved constraint isn't applied when generating"
+              : `${unenforcedConstraints.length} saved constraints aren't applied when generating`}
+            {' '}— the timetable below won't reflect{' '}
+            {unenforcedConstraints.length === 1 ? 'it' : 'them'}. Check the Constraints tab for
+            which ones and why.
+          </span>
+        </div>
+      )}
 
       {isGenerating && (
         <motion.div

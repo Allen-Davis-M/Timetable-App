@@ -92,9 +92,6 @@ untrusted client calling the API directly.
 
 - Per-resource ownership checks (see multi-tenancy note above) — deferred
   until multiple admins per school is an actual requirement.
-- Diagnosing infeasibility caused by an interaction *between* several
-  constraints (as opposed to one constraint alone) — see the "Infeasibility
-  diagnostics" section below for what's covered and what still isn't.
 
 ## Request lifecycle (generate timetable)
 
@@ -175,23 +172,54 @@ than a generic failure. `app/routers/timetables.py` joins multiple hits
 with newlines, and `TimetableTab.jsx` renders them as a bullet list rather
 than one run-on sentence when there's more than one.
 
-**What this deliberately doesn't do**: find the true minimal cause of an
-infeasibility that comes from several constraints interacting — e.g. two
-different subjects both restricted to the same single period for the same
-class group, where neither restriction is a problem on its own. That's a
-genuinely hard problem (formally, finding a minimal unsatisfiable subset
-of constraints), and doing it properly would mean something like CP-SAT's
-assumption-based conflict analysis (`AddAssumption` /
-`SufficientAssumptionsForInfeasibility`) rather than closed-form checks
-like these. When none of the three checks above find anything,
-`_diagnose_infeasibility` returns an empty list on purpose — the router
-falls back to an honest "the specific cause couldn't be automatically
-identified, it's likely an interaction between several constraints" message
-plus a concrete next step (try removing the most recently added constraint
-and regenerating), rather than pretending to have diagnosed something it
-didn't. Extending this to the multi-constraint case is exactly the "open
-decision" noted above, and would be worth doing once there's enough real
-usage to see which multi-constraint conflicts actually come up in practice.
+**Multi-constraint conflicts.** The three checks above each look for one
+cause acting alone. When none of them find anything and the solve is a
+*proven* infeasible (not a timeout — see below), `_diagnose_constraint_conflicts`
+runs next, for the case those checks can't see by construction: two or more
+admin-authored Constraint rows that are each individually fine but can't
+all hold at once together — e.g. two different subjects both restricted to
+the same single period for the same class group, where neither restriction
+is a problem on its own.
+
+This is done with CP-SAT's actual conflict-analysis machinery rather than
+another closed-form check, since "which subset of rules is mutually
+unsatisfiable" is a genuinely different kind of question (formally, finding
+a minimal unsatisfiable subset) than "does this one number exceed that one
+number." `_diagnose_constraint_conflicts` rebuilds a second, smaller
+CP-SAT model — mirroring the main model's structural constraints (no
+double-booking, requirement counts, teacher caps, the assistant-teacher
+reservation described above) exactly, via the same `_candidate_teacher_ids`
+helper the main solve uses, so the two can't drift apart on what "eligible"
+means — but wraps every conflict-capable Constraint row (placement/day
+restrictions, consecutive-period caps, subject sequencing, subject
+spacing) in its own boolean literal instead of applying it unconditionally,
+and passes all of them to `CpModel.AddAssumptions`. Solving with every
+assumption asked-true behaves identically to the real model whenever
+everything's actually satisfiable; if it comes back infeasible instead,
+`solver.SufficientAssumptionsForInfeasibility()` returns a genuinely
+sufficient subset of those literals that can't all hold together (not
+guaranteed to be the single smallest such subset, but always a real,
+checkable one), which gets mapped back to the specific Constraint rows for
+the message — e.g. naming both "Math must be in the first period" and "PE
+must be in the first period" as jointly responsible, instead of the old
+generic fallback.
+
+Kept as an entirely separate model built only on the failure path, not a
+modification of the main solve — its happy-path performance and behavior
+(stress-tested to 200 sections, see below) is completely unaffected by this
+function existing. If the second model turns out satisfiable after all, or
+its own (much shorter) solve times out inconclusively, or the infeasibility
+turns out to trace back to a single Constraint row rather than a genuine
+multi-way interaction, this stays silent and returns nothing rather than
+guessing — the router's honest "the specific cause couldn't be
+automatically identified" fallback still exists for whatever this doesn't
+catch (a proven infeasibility with no admin Constraint rows involved at
+all, or a genuine solver timeout). Also deliberately excludes lab-batch
+requirements (`Subject.lab_batch_count >= 2`) — a batch's "does a session
+happen" occupancy variable isn't a per-teacher assignment the way every
+other variable in this pass is, so if the only real conflict involves a
+batched subject, this pass won't find it rather than risking a wrong
+answer.
 
 ## Constraint parsing: LLM first, regex fallback
 
@@ -697,12 +725,13 @@ rather than shown-then-rejected. This is a UX nicety layered on top of
 the real enforcement in `access.py` — the backend blocks a viewer's
 write attempt regardless of what the frontend shows, verified directly
 (not just inferred from hidden buttons) in the TestClient script noted
-below. **Known gap**: the Periods and Rooms sub-panels (collapsed
-toggles inside Data Entry) aren't yet role-gated at the UI level — a
-viewer opening them would see the normal add/edit controls and get a
-403 from the backend on submit rather than not seeing the controls at
-all. Correct outcome, rougher UX; left for a follow-up pass rather than
-blocking this feature on it.
+below. The Periods and Rooms sub-panels (inside Data Entry's Setup
+section) are now role-gated the same way as everything else: `DataEntryTab.jsx`
+passes `readOnly` through `SetupSection` into `PeriodsPanel.jsx` and
+`RoomsPanel.jsx`, which hide their add-forms and per-row "Remove" buttons
+for a viewer — previously this `readOnly` prop stopped at `SetupSection`
+and was never forwarded, so a viewer saw the normal controls and only
+found out they couldn't act on them from a 403 after submitting.
 
 **A second fix that came out of closing the auth gap**: the timetable
 export links (`GET /api/timetables/{id}/export`) used to be plain
@@ -1095,10 +1124,16 @@ What it actually changes, all purely presentational:
 `SchoolOut` already includes the field from `create_school`/
 `list_schools`/`get_school` in `app/routers/schools.py`.
 
-Known gap, left for later since it's out of scope for "cosmetic
-defaults": there's no way to change a school's type after creation, and
-no bulk indicator anywhere (sidebar, school switcher) showing which
-type a school is once you've moved past the creation modal.
+`PUT /api/schools/{id}/institution-type` (admin-only, same
+`require_school_access(..., min_role="admin")` pattern as
+`update_grade_order`) closes the gap this section used to describe: an
+admin can change a school's type after creation, and `Sidebar.jsx` shows
+which one it currently is — a small "School"/"College" label next to the
+"Admin" text under the school switcher, clickable (for admins) into a tiny
+inline dropdown instead of a separate settings screen. Still purely
+cosmetic, same as at creation: changing it never touches existing data
+(class groups, lab-batch settings, credits) — only which placeholder
+wording and which college-only fields the frontend shows from then on.
 
 ## Add-teacher modal with multi-subject assignment
 

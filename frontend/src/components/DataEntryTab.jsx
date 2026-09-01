@@ -592,6 +592,7 @@ function SetupSection({ schoolId, periods, onPeriodsChanged, rooms, onRoomsChang
             periods={periods}
             onCreate={onPeriodsChanged.create}
             onDelete={onPeriodsChanged.delete}
+            readOnly={readOnly}
           />
         </div>
         <div className="p-4">
@@ -603,6 +604,7 @@ function SetupSection({ schoolId, periods, onPeriodsChanged, rooms, onRoomsChang
             rooms={rooms}
             onCreate={onRoomsChanged.create}
             onDelete={onRoomsChanged.delete}
+            readOnly={readOnly}
           />
         </div>
         {!readOnly && (
