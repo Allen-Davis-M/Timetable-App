@@ -39,6 +39,13 @@ class InviteOut(BaseModel):
     # convenience: the frontend builds the shareable link straight from
     # this instead of the admin having to dig a token out of the database.
     token: str
+    # True if an invite email was actually sent (Resend accepted it) at
+    # creation time; False both when no email was even attempted (no
+    # RESEND_API_KEY configured) and when sending failed for any other
+    # reason. Always False for invites read back later via list_invites,
+    # since this isn't stored — it's only meaningful on the create response,
+    # which is when TeamTab.jsx uses it to decide what to tell the admin.
+    email_sent: bool = False
 
 
 class InvitePreviewOut(BaseModel):

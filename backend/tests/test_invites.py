@@ -7,6 +7,9 @@ confirms an existing account's password (invite email already has a
 User row) — and that a wrong password on the existing-account branch is
 rejected rather than silently logging in as that user.
 """
+from unittest.mock import patch
+
+from app.core.config import settings
 from tests.conftest import create_school, signup
 
 
@@ -94,6 +97,50 @@ def test_revoked_invite_cannot_be_accepted(client):
 
     r = client.post(f"/api/invites/{invite['token']}/accept", json={"name": "X", "password": "password123"})
     assert r.status_code == 404
+
+
+def test_create_invite_without_resend_configured_still_succeeds(client):
+    """The whole point of email being best-effort: no RESEND_API_KEY (the
+    default, and the test env's actual state) must never block invite
+    creation itself — see app/services/email_service.py's docstring."""
+    assert settings.resend_api_key is None
+    _, owner_headers = signup(client, email="owner@a.com")
+    school = create_school(client, owner_headers)
+    r = client.post(
+        f"/api/schools/{school['id']}/invites", json={"email": "new@a.com", "role": "viewer"}, headers=owner_headers
+    )
+    assert r.status_code == 201
+    assert r.json()["email_sent"] is False
+    assert r.json()["token"]  # link is still usable regardless
+
+
+def test_create_invite_reports_email_sent_when_resend_succeeds(client):
+    _, owner_headers = signup(client, email="owner@a.com")
+    school = create_school(client, owner_headers)
+    with patch.object(settings, "resend_api_key", "fake-key"):
+        with patch("app.services.email_service.requests.post") as mock_post:
+            mock_post.return_value.status_code = 200
+            r = client.post(
+                f"/api/schools/{school['id']}/invites",
+                json={"email": "new@a.com", "role": "viewer"}, headers=owner_headers,
+            )
+    assert r.status_code == 201
+    assert r.json()["email_sent"] is True
+
+
+def test_create_invite_still_succeeds_when_email_send_fails(client):
+    """A Resend outage/misconfiguration must degrade to 'no email sent',
+    not fail the whole invite-creation request."""
+    _, owner_headers = signup(client, email="owner@a.com")
+    school = create_school(client, owner_headers)
+    with patch.object(settings, "resend_api_key", "fake-key"):
+        with patch("app.services.email_service.requests.post", side_effect=ConnectionError("boom")):
+            r = client.post(
+                f"/api/schools/{school['id']}/invites",
+                json={"email": "new@a.com", "role": "viewer"}, headers=owner_headers,
+            )
+    assert r.status_code == 201
+    assert r.json()["email_sent"] is False
 
 
 def test_duplicate_pending_invite_for_same_email_is_rejected(client):

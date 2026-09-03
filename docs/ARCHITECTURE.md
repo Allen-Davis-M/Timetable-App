@@ -75,6 +75,29 @@ every other endpoint depends on `get_current_user`, which decodes the
 token and loads the `User` row, rejecting the request with 401 if the
 token is missing, expired, or invalid.
 
+**Password reset** (`POST /api/auth/forgot-password`, `POST
+/api/auth/reset-password`): a `PasswordResetToken` row (see
+`app/models/user.py`) — its own table rather than columns on `User`, same
+reasoning as `SchoolInvite` — holds a random token, an expiry
+(`PASSWORD_RESET_EXPIRE_MINUTES`, default 60), and a `used` flag so a
+link can't be redeemed twice even before it expires. `forgot-password`
+always returns the same generic 202 response whether or not the email
+has an account — returning something different for each (e.g. 404 for
+"no such user") would let a caller enumerate which emails are
+registered, so the only visible difference between "this email exists"
+and "this email doesn't" is whether an email actually goes out (via
+`app/services/email_service.py`'s `send_password_reset_email`, itself
+best-effort — see the transactional-email section below). Works for a
+Google-only account too (`hashed_password` is null): completing a reset
+just sets one, giving that account an email/password login option
+alongside Google sign-in. `reset-password` *does* distinguish "valid
+token" from "invalid/expired/used token" in its response — safe here
+unlike the enumeration concern above, since a reset token is an
+unguessable random value rather than something iterable like an email
+address — and logs the user in on success (same `TokenResponse` shape as
+login/signup), since clicking the link already proved control of the
+account's email.
+
 Multi-tenancy is enforced at exactly one point: `School.owner_id`.
 Creating a school attaches the logged-in user as owner, and
 `GET /api/schools` / `GET /api/schools/{id}` only return schools that
@@ -702,10 +725,31 @@ management endpoints added to `schools.py`): an admin creates an invite
 includes the invite's token (safe here specifically because every
 endpoint that returns it is already admin-only — see `InviteOut`'s
 docstring in `schemas/membership.py`) so `TeamTab.jsx` can build a
-shareable link (`?invite=<token>`) right away. There's no email service
-wired up, so nothing is sent automatically — the admin copies the link
-and sends it themselves, same "documented, not silently wrong" pattern
-as other gaps in this project. `GET /api/invites/{token}` (preview) and
+shareable link (`?invite=<token>`) right away. Creating the invite also
+tries to actually email it via `app/services/email_service.py`, which
+calls Resend's HTTP API directly (not their SDK — it's a single POST, not
+worth a new dependency). This is deliberately best-effort: no
+`RESEND_API_KEY` configured, or any failure sending (bad key, Resend
+outage, rejected request), just makes `send_invite_email` return `False`
+— it never raises, and invite creation always succeeds regardless, since
+the invite row and its link already exist before the email is even
+attempted. `InviteOut.email_sent` reports which happened so `TeamTab.jsx`
+can tell the admin either "an email was sent" or "share this link
+yourself" — the copyable link is always shown either way, so a missing
+API key or a flaky send never leaves an admin stuck. See `.env.example`
+for the three settings this needs: `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`
+(must be a Resend-verified sender in production — the default
+`onboarding@resend.dev` works with zero setup but is for testing only),
+and `FRONTEND_BASE_URL` (must be set to the real deployed frontend URL in
+production, or the link inside the email will point at localhost).
+
+**What this doesn't cover.** Password reset is now built (see the "Auth
+and multi-tenancy" section above) and uses this same `email_service.py`
+via `send_password_reset_email`. Billing receipts remain entirely
+unbuilt — there's no billing/payments integration yet for a receipt to
+describe, so there's nothing for that function to send.
+
+`GET /api/invites/{token}` (preview) and
 `POST /api/invites/{token}/accept` are public — no auth required, since
 whoever clicked the link likely isn't logged in yet. Accepting always
 requires a password: either to set one for a brand-new account (the

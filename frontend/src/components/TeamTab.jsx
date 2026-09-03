@@ -9,15 +9,18 @@ import { api } from '../api'
  * removed or demoted (backend/app/routers/schools.py enforces this too;
  * the UI just doesn't offer the buttons for it).
  *
- * No email is actually sent when you invite someone — there's no email
- * service wired up yet (see ARCHITECTURE.md). Instead, inviting shows a
- * copyable link right away that you send yourself.
+ * Inviting someone tries to send them an email via Resend (see
+ * backend/app/services/email_service.py) with the invite link. That's
+ * best-effort — no RESEND_API_KEY configured, or any send failure, just
+ * means no email went out — so a copyable link is always shown too,
+ * regardless of whether the email succeeded.
  */
 export default function TeamTab({ schoolId, members, invites, onReload }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('viewer')
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  // { link, email, emailSent } for the invite just created, or null.
   const [justCreatedLink, setJustCreatedLink] = useState(null)
 
   // Clears a previously-copied invite link if the admin switches to a
@@ -36,7 +39,11 @@ export default function TeamTab({ schoolId, members, invites, onReload }) {
     setError(null)
     try {
       const invite = await api.createInvite(schoolId, email.trim(), role)
-      setJustCreatedLink(`${window.location.origin}${window.location.pathname}?invite=${invite.token}`)
+      setJustCreatedLink({
+        link: `${window.location.origin}${window.location.pathname}?invite=${invite.token}`,
+        email: invite.email,
+        emailSent: invite.email_sent,
+      })
       setEmail('')
       await onReload()
     } catch (err) {
@@ -133,7 +140,15 @@ export default function TeamTab({ schoolId, members, invites, onReload }) {
                 </div>
                 <button
                   onClick={() =>
-                    setJustCreatedLink(`${window.location.origin}${window.location.pathname}?invite=${inv.token}`)
+                    setJustCreatedLink({
+                      link: `${window.location.origin}${window.location.pathname}?invite=${inv.token}`,
+                      email: inv.email,
+                      // Unknown here — this re-shows the link for an
+                      // already-existing invite, not a freshly created
+                      // one, and list_invites doesn't report whether the
+                      // original email send succeeded.
+                      emailSent: null,
+                    })
                   }
                   className="text-xs text-slate-400 hover:text-slate-700"
                 >
@@ -177,9 +192,13 @@ export default function TeamTab({ schoolId, members, invites, onReload }) {
         {justCreatedLink && (
           <div className="rounded-md bg-slate-50 p-3 text-xs">
             <p className="mb-1 text-slate-500">
-              Share this link with them — there's no email sent automatically yet:
+              {justCreatedLink.emailSent === true &&
+                `An invite email was sent to ${justCreatedLink.email}. You can also share this link directly:`}
+              {justCreatedLink.emailSent === false &&
+                `Couldn't send an email to ${justCreatedLink.email} — share this link with them instead:`}
+              {justCreatedLink.emailSent === null && 'Share this link with them:'}
             </p>
-            <code className="break-all text-slate-700">{justCreatedLink}</code>
+            <code className="break-all text-slate-700">{justCreatedLink.link}</code>
           </div>
         )}
       </form>

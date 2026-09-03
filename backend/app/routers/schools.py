@@ -26,6 +26,7 @@ from app.models.school import School, SchoolInvite, SchoolMembership
 from app.models.user import User
 from app.schemas.membership import InviteCreate, InviteOut, MemberOut, MemberRoleUpdate
 from app.schemas.school import SchoolCreate, SchoolGradeOrderUpdate, SchoolInstitutionTypeUpdate, SchoolOut
+from app.services.email_service import send_invite_email
 
 router = APIRouter(prefix="/api/schools", tags=["schools"])
 
@@ -208,11 +209,12 @@ def create_invite(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
     """
-    Admin-only. No email is actually sent yet — there's no email service
-    wired up (same "documented, not silently wrong" pattern as the rest of
-    this app's known limitations; see docs/ARCHITECTURE.md). The response
-    includes the invite id; the frontend builds a shareable link from it
-    (see api.js / TeamTab.jsx) that the admin copies and sends themselves.
+    Admin-only. Attempts to send the invite by email via Resend (see
+    app/services/email_service.py) if RESEND_API_KEY is configured;
+    otherwise, and on any send failure, this silently no-ops on the email
+    side — the invite is still created and its link is still included in
+    the response (see api.js / TeamTab.jsx), so the admin always has a
+    copyable fallback regardless of whether the email went out.
     """
     require_school_access(db, current_user, school_id, min_role="admin")
     if payload.role not in ("admin", "viewer"):
@@ -234,6 +236,15 @@ def create_invite(
     db.add(invite)
     db.commit()
     db.refresh(invite)
+
+    school = db.get(School, school_id)
+    invite.email_sent = send_invite_email(
+        to_email=invite.email,
+        school_name=school.name if school else "your school",
+        inviter_name=current_user.name or current_user.email,
+        role=invite.role,
+        invite_token=invite.token,
+    )
     return invite
 
 

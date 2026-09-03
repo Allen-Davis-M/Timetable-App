@@ -4,6 +4,7 @@ import { api, getToken, setToken } from './api'
 import LandingPage from './components/LandingPage'
 import AuthPage from './components/AuthPage'
 import AcceptInvitePage from './components/AcceptInvitePage'
+import ResetPasswordPage from './components/ResetPasswordPage'
 import Sidebar from './components/Sidebar'
 import FirstRunWelcome from './components/FirstRunWelcome'
 import OverviewTab from './components/OverviewTab'
@@ -133,6 +134,11 @@ function App() {
   // the app after accepting/dismissing it.
   const [inviteToken] = useState(() => new URLSearchParams(window.location.search).get('invite'))
   const [inviteHandled, setInviteHandled] = useState(false)
+
+  // Same reasoning as inviteToken above — a password-reset link is
+  // `?reset=<token>` on the same URL, checked once on load.
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get('reset'))
+  const [resetHandled, setResetHandled] = useState(false)
 
   // On load, if a token is already stored, validate it via /auth/me instead
   // of bouncing straight to the login screen.
@@ -446,6 +452,12 @@ function App() {
     setUser(acceptedUser)
   }
 
+  function handlePasswordReset(resetUser) {
+    setResetHandled(true)
+    window.history.replaceState(null, '', window.location.pathname)
+    setUser(resetUser)
+  }
+
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId)
   const selectedClassGroup = classGroups.find((c) => c.id === selectedClassGroupId)
 
@@ -475,6 +487,10 @@ function App() {
 
   if (inviteToken && !inviteHandled) {
     return <AcceptInvitePage token={inviteToken} onAccepted={handleInviteAccepted} />
+  }
+
+  if (resetToken && !resetHandled) {
+    return <ResetPasswordPage token={resetToken} onReset={handlePasswordReset} />
   }
 
   if (checkingSession) {

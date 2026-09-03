@@ -118,6 +118,8 @@ export const api = {
   // it server-side rather than trusting it as-is.
   loginWithGoogle: (credential) => post("/auth/google", { credential }),
   me: () => get("/auth/me"),
+  forgotPassword: (email) => post("/auth/forgot-password", { email }),
+  resetPassword: (token, newPassword) => post("/auth/reset-password", { token, new_password: newPassword }),
 
   // Schools
   listSchools: () => get("/schools"),

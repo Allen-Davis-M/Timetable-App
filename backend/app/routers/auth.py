@@ -8,6 +8,8 @@ email. No password is ever involved for that path — `hashed_password` stays
 null for Google-only accounts (the User model already allows this).
 """
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from google.auth.transport import requests as google_requests
@@ -17,8 +19,17 @@ from sqlalchemy.orm import Session
 from app.core.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.user import User
-from app.schemas.auth import GoogleLoginRequest, LoginRequest, SignupRequest, TokenResponse, UserOut
+from app.models.user import PasswordResetToken, User
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    GoogleLoginRequest,
+    LoginRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    TokenResponse,
+    UserOut,
+)
+from app.services.email_service import send_password_reset_email
 
 logger = logging.getLogger(__name__)
 
@@ -107,3 +118,68 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/forgot-password", status_code=202)
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Always returns the same generic response whether or not an account
+    with this email exists, and regardless of whether the email actually
+    sent — deliberately, to avoid leaking which emails have accounts on
+    this app (a classic account-enumeration hole: if this returned 404
+    for "no such user" and 200 for "reset sent", an attacker could use it
+    to check which email addresses are registered). The frontend should
+    just always show "if that email exists, we've sent a reset link."
+
+    A Google-only account (hashed_password is null) can still request and
+    complete a reset — see PasswordResetToken's docstring for why that's
+    intentional rather than an edge case to reject.
+    """
+    user = db.query(User).filter(User.email == payload.email).first()
+    if user:
+        token = PasswordResetToken(
+            user_id=user.id,
+            token=secrets.token_urlsafe(32),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.password_reset_expire_minutes),
+        )
+        db.add(token)
+        db.commit()
+        send_password_reset_email(to_email=user.email, reset_token=token.token)
+    return {"detail": "If an account with that email exists, we've sent a password reset link."}
+
+
+@router.post("/reset-password", response_model=TokenResponse)
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Unlike forgot_password, this endpoint's response DOES reveal whether
+    the token was valid — that's fine here (unlike the email-enumeration
+    concern above) because a reset token is an unguessable random value,
+    not something an attacker can iterate over like an email address, so
+    confirming "this specific token is invalid" doesn't leak anything
+    about which accounts exist.
+
+    Logs the user in on success (returns a TokenResponse, same as
+    login/signup) since they've just proven control of the account's
+    email by clicking the link — making them re-enter the new password
+    on a separate login screen right after setting it would be friction
+    with no real security benefit.
+    """
+    reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token == payload.token).first()
+    now = datetime.now(timezone.utc)
+    if (
+        not reset_token
+        or reset_token.used
+        or reset_token.expires_at.replace(tzinfo=timezone.utc) < now
+    ):
+        raise HTTPException(status_code=400, detail="This password reset link is invalid or has expired.")
+
+    user = db.get(User, reset_token.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="This password reset link is invalid or has expired.")
+
+    user.hashed_password = hash_password(payload.new_password)
+    reset_token.used = True
+    db.commit()
+
+    token = create_access_token(user.id)
+    return TokenResponse(access_token=token, user=user)

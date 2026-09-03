@@ -51,5 +51,33 @@ class Settings(BaseSettings):
     # the backend endpoint returns a clear error if this is missing.
     google_client_id: str | None = None
 
+    # Used by app/services/email_service.py to actually send invite emails
+    # via Resend's HTTP API (https://resend.com). If unset, invite creation
+    # silently skips sending — the invite is still created and its link is
+    # still returned in the API response, so the admin can copy/send it
+    # manually (same behavior as before this was wired up). Get a key at
+    # resend.com/api-keys.
+    resend_api_key: str | None = None
+    # Resend requires "Name <email>" format. The default is Resend's shared
+    # onboarding@resend.dev sender, which works out of the box with no
+    # domain setup but is best for testing only — verify your own sending
+    # domain in Resend and set this to something like
+    # "Timetable App <notifications@yourdomain.com>" before relying on this
+    # for real users (unverified-domain mail is more likely to land in spam
+    # and can only send to the Resend account's own verified address).
+    email_from_address: str = "Timetable App <onboarding@resend.dev>"
+    # Base URL of the deployed frontend (no trailing slash), used to build
+    # the invite link included in the email — e.g. "https://app.example.com".
+    # Defaults to the local Vite dev server so invite emails work out of the
+    # box in development; MUST be set to the real deployed frontend URL in
+    # production or invite links will point at localhost.
+    frontend_base_url: str = "http://localhost:5173"
+
+    # How long a forgot-password link stays valid before it's rejected as
+    # expired (see PasswordResetToken / app/routers/auth.py). Short on
+    # purpose — this is a bearer link that could leak via a forwarded
+    # email or shared inbox, so it shouldn't stay usable indefinitely.
+    password_reset_expire_minutes: int = 60
+
 
 settings = Settings()

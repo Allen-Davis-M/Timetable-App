@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -20,3 +22,32 @@ class User(Base):
     google_sub = Column(String, unique=True, nullable=True)
 
     schools = relationship("School", back_populates="owner")
+
+
+class PasswordResetToken(Base):
+    """
+    A one-time, short-lived token for the forgot-password flow (see
+    app/routers/auth.py's forgot_password/reset_password endpoints). Kept
+    as its own table rather than columns on User (the pattern SchoolInvite
+    uses for the same reason): a user can request multiple resets over
+    time, and this way old ones just pile up as harmless rows instead of
+    needing to be overwritten in place.
+
+    `used` is set True the moment a token is redeemed, so a leaked/reused
+    reset link (e.g. from an email forwarded or left open in a browser
+    tab) can't reset the password a second time even before `expires_at`.
+    Works for Google-only accounts too (hashed_password null) — resetting
+    just sets a password, giving that account an email/password login
+    option alongside Google sign-in, rather than requiring one to exist
+    already.
+    """
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String, nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User")

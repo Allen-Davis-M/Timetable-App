@@ -19,12 +19,18 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
  * as-is from the client.
  */
 export default function AuthPage({ onAuthenticated, onBack }) {
-  const [mode, setMode] = useState('login') // 'login' | 'signup'
+  const [mode, setMode] = useState('login') // 'login' | 'signup' | 'forgot'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  // True once a forgot-password request has been submitted — shown
+  // instead of the form so a resubmit can't fire twice. Deliberately the
+  // same message regardless of what the backend actually did (see
+  // forgot_password's docstring in backend/app/routers/auth.py): this
+  // screen must not reveal whether the email had an account.
+  const [forgotSubmitted, setForgotSubmitted] = useState(false)
   // True if the Google script failed to load (offline, ad-blocker,
   // accounts.google.com unreachable, etc.) — without this, that failure
   // was silent: the "or" divider would render with no button ever
@@ -106,6 +112,24 @@ export default function AuthPage({ onAuthenticated, onBack }) {
     }
   }
 
+  async function handleForgotSubmit(e) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    try {
+      await api.forgotPassword(email)
+      setForgotSubmitted(true)
+    } catch (err) {
+      // Only a genuinely broken request (network error, malformed email)
+      // reaches here — the backend itself always returns success-shaped
+      // 202 regardless of whether the email has an account, so this
+      // isn't the "no account found" path.
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-8">
       <motion.div
@@ -126,32 +150,97 @@ export default function AuthPage({ onAuthenticated, onBack }) {
             <div className="text-lg font-semibold text-slate-900">Timetable</div>
           )}
           <h1 className="mt-2 text-2xl font-semibold">
-            {isLogin ? 'Welcome back' : 'Create your account'}
+            {mode === 'forgot' ? 'Reset your password' : isLogin ? 'Welcome back' : 'Create your account'}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isLogin
-              ? "Sign in to manage your school's timetables"
-              : 'Set up your school in a couple of minutes'}
+            {mode === 'forgot'
+              ? "Enter your account's email and we'll send you a reset link"
+              : isLogin
+                ? "Sign in to manage your school's timetables"
+                : 'Set up your school in a couple of minutes'}
           </p>
         </div>
 
-        {GOOGLE_CLIENT_ID ? (
-          <>
-            {googleUnavailable ? (
-              <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Couldn't load Google sign-in (check your connection) — email and password still
-                work below.
-              </p>
-            ) : (
-              <div className="mb-4 flex justify-center" ref={googleButtonRef} />
-            )}
-            <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
-              <div className="h-px flex-1 bg-slate-200" />
-              or
-              <div className="h-px flex-1 bg-slate-200" />
+        {mode === 'forgot' ? (
+          forgotSubmitted ? (
+            <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-600">
+              If an account exists for {email}, we've sent a password reset link to it.
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login')
+                  setForgotSubmitted(false)
+                }}
+                className="mt-3 block w-full text-indigo-600 underline underline-offset-2 hover:text-indigo-700"
+              >
+                Back to sign in
+              </button>
             </div>
-          </>
-        ) : null}
+          ) : (
+            <form onSubmit={handleForgotSubmit} className="flex flex-col gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@school.edu"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <AnimatePresence>
+                {error && (
+                  <motion.p
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="overflow-hidden text-sm text-red-600"
+                  >
+                    {error}
+                  </motion.p>
+                )}
+              </AnimatePresence>
+
+              <motion.button
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
+                type="submit"
+                disabled={loading}
+                className="mt-1 rounded-md bg-indigo-600 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {loading ? 'Sending…' : 'Send reset link'}
+              </motion.button>
+              <button
+                type="button"
+                onClick={() => setMode('login')}
+                className="text-center text-sm text-indigo-600 underline underline-offset-2 hover:text-indigo-700"
+              >
+                Back to sign in
+              </button>
+            </form>
+          )
+        ) : (
+          <>
+            {GOOGLE_CLIENT_ID ? (
+              <>
+                {googleUnavailable ? (
+                  <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Couldn't load Google sign-in (check your connection) — email and password still
+                    work below.
+                  </p>
+                ) : (
+                  <div className="mb-4 flex justify-center" ref={googleButtonRef} />
+                )}
+                <div className="mb-4 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  or
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+              </>
+            ) : null}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <AnimatePresence initial={false}>
@@ -194,6 +283,18 @@ export default function AuthPage({ onAuthenticated, onBack }) {
               placeholder="••••••••"
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
+            {isLogin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('forgot')
+                  setError(null)
+                }}
+                className="mt-1 text-xs text-indigo-600 underline underline-offset-2 hover:text-indigo-700"
+              >
+                Forgot password?
+              </button>
+            )}
           </div>
 
           <AnimatePresence>
@@ -231,6 +332,8 @@ export default function AuthPage({ onAuthenticated, onBack }) {
             {isLogin ? 'Sign up' : 'Sign in'}
           </button>
         </p>
+          </>
+        )}
       </motion.div>
     </div>
   )
