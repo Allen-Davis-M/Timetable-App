@@ -265,6 +265,28 @@ reference exact names from those lists or return `null`; the router then
 does a plain dict lookup on whatever name comes back, so fuzzy matching
 lives entirely in the prompt, not scattered through router code.
 
+**Batch entry.** `POST /api/constraints/batch` (same router) is the
+multi-rule counterpart: an admin pastes or types several rules at once
+(ConstraintsTab.jsx's "Got several rules at once?" textarea) instead of
+submitting one sentence per request. `parse_constraints_batch_llm` in
+`llm_constraint_parser.py` sends the whole block to Claude in a single
+call with a `record_constraints` tool whose `constraints` array reuses
+the exact same per-item schema as the single-constraint `record_constraint`
+tool — same grounding against known teacher/subject/class-group names,
+same never-raises-returns-`None`-on-failure contract. If that's
+unavailable (no key, or the call failed), `_resolve_constraints_batch_text`
+in `app/routers/constraints.py` falls back to treating each non-blank
+line of the input as its own rule and running it through the exact same
+per-line pipeline `/parse` already uses (LLM-per-line, then regex) — a
+reasonable assumption for a fallback path, since the textarea's
+placeholder text steers input toward one rule per line anyway. Every
+resulting row is created and committed the same way `/parse` creates one,
+so two contradictory rules submitted in the *same* paste get flagged
+against each other exactly like they would if entered one at a time —
+conflict detection (`_find_placement_conflicts`/`_find_day_conflicts`)
+queries every saved constraint of the relevant type for the school, it's
+not scoped to "this batch" vs. "already saved."
+
 ## Constraint types and what's actually enforced
 
 - **workload_limit** ("Mrs. Sharma can only teach 10 periods a week") ->

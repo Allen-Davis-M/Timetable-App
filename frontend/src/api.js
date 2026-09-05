@@ -168,6 +168,12 @@ export const api = {
   // Constraints
   listConstraints: (schoolId) => get(`/constraints?school_id=${schoolId}`),
   parseConstraint: (schoolId, text) => post("/constraints/parse", { school_id: schoolId, text }),
+  // Batch counterpart to parseConstraint — `text` can contain several
+  // rules at once (one per line works best); returns one parse-response
+  // per distinct rule found. See backend/app/routers/constraints.py's
+  // POST /batch docstring for how it splits multi-rule text with and
+  // without an LLM available.
+  parseConstraintsBatch: (schoolId, text) => post("/constraints/batch", { school_id: schoolId, text }),
   // Re-parses new text into an EXISTING constraint (same id) instead of
   // creating a new one — used by the Edit affordance on a constraint card.
   reparseConstraint: (id, text) => put(`/constraints/${id}/reparse`, { text }),

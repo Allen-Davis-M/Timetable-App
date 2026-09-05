@@ -47,6 +47,14 @@ const SCOPABLE_TYPES = new Set([
  * whether the solver actually applies it, regardless of which parser
  * produced it.
  *
+ * "Got several rules at once? Add them all together" switches to a
+ * textarea and POSTs the whole block to POST /api/constraints/batch in
+ * one request instead of one rule at a time — the backend tries to split
+ * it into distinct rules itself (via a batch-oriented LLM call) and falls
+ * back to treating each non-blank line as its own rule if that's
+ * unavailable, so the placeholder text below recommends one rule per
+ * line as the safest input shape either way.
+ *
  * Each card also supports editing in place (rewording re-parses via
  * PUT /{id}/reparse, keeping the same id), an explicit "Applies to" line
  * with a scope editor for the rule types that support being scoped to
@@ -62,6 +70,19 @@ export default function ConstraintsTab({ schoolId, classGroups, constraints, onR
   const [error, setError] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [scopeEditingId, setScopeEditingId] = useState(null)
+  // Batch entry ("add several rules at once") is a separate mode rather
+  // than trying to detect multi-line input in the single-rule form —
+  // keeping them distinct means the single-rule flow's behavior (and its
+  // POST /parse call) never has to change to accommodate this.
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchInput, setBatchInput] = useState('')
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
+  // Short-lived confirmation ("Added 3 constraints") shown after a batch
+  // submit — the new cards themselves already show up in the list below
+  // once onReload() finishes, so this is just feedback that the paste
+  // actually did something, not a second source of truth for what was
+  // created.
+  const [batchResultCount, setBatchResultCount] = useState(null)
 
   function classGroupLabel(cg) {
     return cg.grade ? `${cg.grade} - ${cg.name}` : cg.name
@@ -81,6 +102,25 @@ export default function ConstraintsTab({ schoolId, classGroups, constraints, onR
       setError(err.message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleBatchAdd(e) {
+    e.preventDefault()
+    const text = batchInput.trim()
+    if (!text) return
+    setBatchSubmitting(true)
+    setError(null)
+    setBatchResultCount(null)
+    try {
+      const created = await api.parseConstraintsBatch(schoolId, text)
+      setBatchInput('')
+      setBatchResultCount(created.length)
+      await onReload()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBatchSubmitting(false)
     }
   }
 
@@ -135,21 +175,74 @@ export default function ConstraintsTab({ schoolId, classGroups, constraints, onR
       </div>
 
       {!readOnly && (
-        <form onSubmit={handleAdd} className="flex items-center gap-2.5 rounded-md border border-slate-300 py-1.5 pl-3.5 pr-1.5">
-          <span className="text-slate-400">✦</span>
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="e.g. Math can't immediately follow PE, or Priya Sharma is not available on Wednesdays"
-            className="flex-1 py-1 text-sm focus:outline-none"
-          />
-          <button
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Adding…' : 'Add'}
-          </button>
-        </form>
+        <div className="flex flex-col gap-1.5">
+          {batchMode ? (
+            <form onSubmit={handleBatchAdd} className="flex flex-col gap-1.5 rounded-md border border-slate-300 p-3">
+              <textarea
+                autoFocus
+                value={batchInput}
+                onChange={(e) => setBatchInput(e.target.value)}
+                rows={4}
+                placeholder={
+                  'One rule per line works best, e.g.\n' +
+                  "Math can't immediately follow PE\n" +
+                  'Priya Sharma is not available on Wednesdays\n' +
+                  'No more than 2 PE periods in a row'
+                }
+                className="w-full resize-y text-sm focus:outline-none"
+              />
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBatchMode(false)
+                    setBatchResultCount(null)
+                  }}
+                  className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-700"
+                >
+                  Back to one at a time
+                </button>
+                <button
+                  disabled={batchSubmitting}
+                  className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {batchSubmitting ? 'Adding…' : 'Add all'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <form onSubmit={handleAdd} className="flex items-center gap-2.5 rounded-md border border-slate-300 py-1.5 pl-3.5 pr-1.5">
+                <span className="text-slate-400">✦</span>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="e.g. Math can't immediately follow PE, or Priya Sharma is not available on Wednesdays"
+                  className="flex-1 py-1 text-sm focus:outline-none"
+                />
+                <button
+                  disabled={submitting}
+                  className="rounded-md bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {submitting ? 'Adding…' : 'Add'}
+                </button>
+              </form>
+              <button
+                type="button"
+                onClick={() => setBatchMode(true)}
+                className="self-start text-xs text-slate-500 underline underline-offset-2 hover:text-slate-700"
+              >
+                Got several rules at once? Add them all together
+              </button>
+            </>
+          )}
+          {batchResultCount !== null && (
+            <p className="text-xs text-emerald-700">
+              Added {batchResultCount} constraint{batchResultCount === 1 ? '' : 's'} — check below for any marked
+              as not yet enforced or conflicting.
+            </p>
+          )}
+        </div>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}

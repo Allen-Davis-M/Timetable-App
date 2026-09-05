@@ -208,25 +208,39 @@ endpoint if you want it later); today it's always the full set.
 
 ## Next steps
 
-See `docs/ARCHITECTURE.md` for the data model and open decisions. Known
-gaps, in rough priority order:
+See `docs/ARCHITECTURE.md` for the data model and open decisions. Google
+sign-in, CSV/Excel bulk import, and room assignment (all previously
+listed here as gaps) are done — see ARCHITECTURE.md's relevant sections
+if you're looking for how they work. Known gaps that remain, in rough
+priority order:
 
-1. **Google sign-in** — needs a Google Cloud OAuth client (client ID/secret)
-   that only the project owner can create. The `User.google_sub` column is
-   already reserved for it.
-2. **CSV/Excel bulk import** so admins aren't entering subjects/teachers
-   one row at a time.
-3. **The `scheduling_rule` catch-all constraint type** — `workload_limit`,
+1. **The `scheduling_rule` catch-all constraint type** — `workload_limit`,
    `availability` (by day), subject-period-position (first/last period,
-   optionally scoped to a grade/section), and `max_consecutive_periods`
-   are all enforced now; anything that doesn't map to one of those —
-   room-based rules, rules spanning multiple subjects, etc. — is recorded
-   but not applied. See "Constraint types and what's actually enforced" in
-   ARCHITECTURE.md.
-4. **Room assignment** in the generated timetable (currently left null).
+   optionally scoped to a grade/section), `max_consecutive_periods`,
+   `min_gap_between_subjects`, `subject_day_position`, and
+   `subject_sequence` are all enforced now; anything that doesn't map to
+   one of those — room-based rules, rules spanning multiple subjects,
+   etc. — is recorded but not applied. See "Constraint types and what's
+   actually enforced" in ARCHITECTURE.md.
+2. **Billing/payments** — pricing is informational only; there's no
+   Stripe/Razorpay integration, so nothing can actually be charged yet.
+3. **Teacher self-service** — teachers have no login of their own; an
+   admin enters their availability and manages everything on their
+   behalf. A teacher-facing view of just their own schedule (and
+   eventually letting them submit their own availability) would remove
+   the admin as a bottleneck for every teacher's preferences.
+4. **Notifications** — publishing or editing a timetable, or assigning a
+   substitute, doesn't notify anyone. Email is now wired up (see
+   `app/services/email_service.py`) for invites and password resets, so
+   extending it to these cases is a matter of adding a new send_* function
+   and calling it, not new infrastructure.
+5. **Exam timetabling** — only the recurring weekly class timetable is
+   modeled. Exams need a different shape (invigilator assignment, seating,
+   no clash with syllabus-completion dates), not just a variant of the
+   existing solver.
 
-Pinning a preferred teacher per section (`preferred_teacher_id`) — the
-single biggest lever for generating large schools quickly, per the
-scale-testing table above — now has a UI: the Data Entry tab shows a
-picker under a subject's teacher chips whenever more than one teacher is
-qualified for it.
+Password reset and transactional invite email are also both done now,
+via Resend — see ARCHITECTURE.md's "Auth and multi-tenancy" section and
+its transactional-email writeup for how they work and what they
+deliberately still don't cover (billing receipts, since there's no
+billing yet to describe).

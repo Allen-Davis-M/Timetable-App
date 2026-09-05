@@ -50,6 +50,15 @@ class ConstraintParseRequest(BaseModel):
     text: str
 
 
+class ConstraintBatchParseRequest(BaseModel):
+    """See POST /api/constraints/batch — same idea as ConstraintParseRequest
+    but `text` can contain several rules at once (one per line, or a
+    paragraph naming multiple rules) instead of exactly one."""
+
+    school_id: int
+    text: str
+
+
 class ConstraintReparseRequest(BaseModel):
     """Re-parses new text into an EXISTING constraint row (same id),
     instead of creating a new one — see PUT /api/constraints/{id}/reparse.

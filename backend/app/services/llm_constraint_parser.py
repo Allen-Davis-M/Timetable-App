@@ -133,6 +133,67 @@ class ParsedConstraint:
     min_gap: int | None = None
 
 
+# The batch tool's "constraints" array reuses this exact per-item shape
+# (same properties/required as _TOOL_SCHEMA's single-constraint input) so
+# the model doesn't need to learn two different constraint shapes
+# depending on whether it's parsing one sentence or several.
+_BATCH_TOOL_SCHEMA = {
+    "name": "record_constraints",
+    "description": "Record every distinct school-timetabling constraint found in the provided text.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "constraints": {
+                "type": "array",
+                "description": "One entry per distinct constraint mentioned in the text — several if the admin listed multiple rules, one if there's only one.",
+                "items": _TOOL_SCHEMA["input_schema"],
+            },
+        },
+        "required": ["constraints"],
+    },
+}
+
+
+def _parsed_constraint_from_tool_input(data: dict, fallback_description: str) -> ParsedConstraint:
+    """Shared by parse_constraint_llm and parse_constraints_batch_llm —
+    turns one record_constraint-shaped dict (single call's `tool_use.input`
+    or one entry of a batch call's `constraints` array) into a
+    ParsedConstraint. `fallback_description` covers the (should-be-rare)
+    case where the model leaves `description` empty despite it being a
+    required tool field."""
+    return ParsedConstraint(
+        type=data.get("type", "scheduling_rule"),
+        description=data.get("description") or fallback_description,
+        teacher_name=data.get("teacher_name"),
+        subject_name=data.get("subject_name"),
+        first_subject_name=data.get("first_subject_name"),
+        second_subject_name=data.get("second_subject_name"),
+        class_group_name=data.get("class_group_name"),
+        max_periods_per_week=data.get("max_periods_per_week"),
+        day_of_week=data.get("day_of_week"),
+        position=data.get("position"),
+        mode=data.get("mode"),
+        max_consecutive=data.get("max_consecutive"),
+        min_gap=data.get("min_gap"),
+    )
+
+
+def _grounding_system_prompt(teacher_names: list[str], subject_names: list[str], class_group_labels: list[str]) -> str:
+    """The "only use exact names from these lists" grounding instructions
+    shared by both the single-constraint and batch prompts — factored out
+    so the two can't quietly drift apart on how strict that matching rule
+    is worded."""
+    return (
+        f"Known teachers: {teacher_names}\n"
+        f"Known subjects: {subject_names}\n"
+        f"Known class groups (grades and sections): {class_group_labels}\n\n"
+        "Only reference names that appear verbatim in these lists; if a name in the "
+        "text doesn't clearly match one of them, use null rather than guessing. "
+        "If a rule doesn't fit any of the specific constraint types, use "
+        "type='scheduling_rule' and just fill in description."
+    )
+
+
 def parse_constraint_llm(
     text: str,
     teacher_names: list[str],
@@ -156,13 +217,7 @@ def parse_constraint_llm(
         system_prompt = (
             "You extract a single structured school-timetabling constraint from one "
             "sentence written by a school admin. Use the record_constraint tool.\n\n"
-            f"Known teachers: {teacher_names}\n"
-            f"Known subjects: {subject_names}\n"
-            f"Known class groups (grades and sections): {class_group_labels}\n\n"
-            "Only reference names that appear verbatim in these lists; if a name in the "
-            "sentence doesn't clearly match one of them, use null rather than guessing. "
-            "If the sentence doesn't fit any of the specific constraint types, use "
-            "type='scheduling_rule' and just fill in description."
+            + _grounding_system_prompt(teacher_names, subject_names, class_group_labels)
         )
         response = client.messages.create(
             model=settings.llm_model,
@@ -173,22 +228,63 @@ def parse_constraint_llm(
             messages=[{"role": "user", "content": text}],
         )
         tool_use = next(b for b in response.content if b.type == "tool_use")
-        data = tool_use.input
-        return ParsedConstraint(
-            type=data.get("type", "scheduling_rule"),
-            description=data.get("description") or text,
-            teacher_name=data.get("teacher_name"),
-            subject_name=data.get("subject_name"),
-            first_subject_name=data.get("first_subject_name"),
-            second_subject_name=data.get("second_subject_name"),
-            class_group_name=data.get("class_group_name"),
-            max_periods_per_week=data.get("max_periods_per_week"),
-            day_of_week=data.get("day_of_week"),
-            position=data.get("position"),
-            mode=data.get("mode"),
-            max_consecutive=data.get("max_consecutive"),
-            min_gap=data.get("min_gap"),
-        )
+        return _parsed_constraint_from_tool_input(tool_use.input, fallback_description=text)
     except Exception:
         logger.exception("LLM constraint parsing failed; falling back to regex parser")
+        return None
+
+
+def parse_constraints_batch_llm(
+    text: str,
+    teacher_names: list[str],
+    subject_names: list[str],
+    class_group_labels: list[str],
+) -> list[ParsedConstraint] | None:
+    """Batch counterpart to parse_constraint_llm — extracts every distinct
+    constraint from a whole block of text (e.g. several rules pasted or
+    typed together) in a single call, instead of requiring one call per
+    sentence. Same never-raises contract: returns None if the LLM path
+    can't be used right now (no key, package missing, call/response
+    failed for any reason). Callers must handle None by falling back to
+    splitting the text into lines and parsing each with
+    parse_constraint_llm/the regex parser individually — see
+    app/routers/constraints.py's _resolve_constraints_batch_text."""
+    if not settings.anthropic_api_key:
+        return None
+
+    try:
+        import anthropic
+    except ImportError:
+        logger.warning("anthropic package not installed; falling back to per-line constraint parsing")
+        return None
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        system_prompt = (
+            "You extract EVERY distinct structured school-timetabling constraint "
+            "mentioned in the text below, which may contain several rules written "
+            "together (one per line, or run together in a paragraph) rather than "
+            "just one sentence. Use the record_constraints tool, with one array "
+            "entry per distinct rule you find — do not merge unrelated rules into "
+            "one entry, and do not skip any rule just because it's vague; use "
+            "type='scheduling_rule' for anything that doesn't fit a specific "
+            "type rather than dropping it.\n\n"
+            + _grounding_system_prompt(teacher_names, subject_names, class_group_labels)
+        )
+        response = client.messages.create(
+            model=settings.llm_model,
+            max_tokens=4000,
+            system=system_prompt,
+            tools=[_BATCH_TOOL_SCHEMA],
+            tool_choice={"type": "tool", "name": "record_constraints"},
+            messages=[{"role": "user", "content": text}],
+        )
+        tool_use = next(b for b in response.content if b.type == "tool_use")
+        raw_constraints = tool_use.input.get("constraints") or []
+        return [
+            _parsed_constraint_from_tool_input(data, fallback_description=text)
+            for data in raw_constraints
+        ]
+    except Exception:
+        logger.exception("LLM batch constraint parsing failed; falling back to per-line parsing")
         return None

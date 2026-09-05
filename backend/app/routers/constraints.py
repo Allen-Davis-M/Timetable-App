@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -7,6 +9,7 @@ from app.core.database import get_db
 from app.models.school import ClassGroup, Constraint, Period, Subject, Teacher
 from app.models.user import User
 from app.schemas.constraint import (
+    ConstraintBatchParseRequest,
     ConstraintCreate,
     ConstraintOut,
     ConstraintParseRequest,
@@ -15,7 +18,11 @@ from app.schemas.constraint import (
     ConstraintUpdate,
 )
 from app.services import constraint_parser as regex_parser
-from app.services.llm_constraint_parser import ParsedConstraint, parse_constraint_llm
+from app.services.llm_constraint_parser import (
+    ParsedConstraint,
+    parse_constraint_llm,
+    parse_constraints_batch_llm,
+)
 
 router = APIRouter(prefix="/api/constraints", tags=["constraints"])
 
@@ -295,21 +302,70 @@ def delete_constraint(constraint_id: int, db: Session = Depends(get_db), current
     db.commit()
 
 
-def _resolve_constraint_text(db: Session, school_id: int, text: str) -> tuple[str, dict, str]:
-    """
-    Shared by both POST /parse (new constraint) and PUT /{id}/reparse
-    (editing an existing one's text in place): turns plain-English text
-    into (db_type, parameters, description), applying the same
-    teacher/subject/class-group name resolution either way so a reparsed
-    constraint behaves identically to a freshly created one.
+@dataclass
+class _ResolutionData:
+    """Everything needed to turn a ParsedConstraint's *names* (teacher_name,
+    subject_name, ...) into this school's actual row ids — fetched once
+    per request (not once per rule) so a batch of N rules costs one set of
+    three queries, not N."""
 
-    Parsing tries Claude first (app/services/llm_constraint_parser.py),
+    teacher_by_name: dict[str, Teacher]
+    subject_by_name: dict[str, Subject]
+    # A "class group label" can name a whole grade (matches every section
+    # in it) or one specific section, so constraint text can say either
+    # "Grade 3" or "Grade 3 - A" and both resolve.
+    label_to_class_groups: dict[str, list[ClassGroup]]
+    teacher_names: list[str]
+    subject_names: list[str]
+    class_group_labels: list[str]
+
+
+def _load_resolution_data(db: Session, school_id: int) -> _ResolutionData:
+    teachers = db.query(Teacher).filter(Teacher.school_id == school_id).all()
+    subjects = db.query(Subject).filter(Subject.school_id == school_id).all()
+    class_groups = db.query(ClassGroup).filter(ClassGroup.school_id == school_id).all()
+
+    label_to_class_groups: dict[str, list[ClassGroup]] = {}
+    for grade in sorted({cg.grade for cg in class_groups if cg.grade}):
+        label_to_class_groups[grade] = [cg for cg in class_groups if cg.grade == grade]
+    for cg in class_groups:
+        label = f"{cg.grade} - {cg.name}" if cg.grade else cg.name
+        label_to_class_groups[label] = [cg]
+
+    return _ResolutionData(
+        teacher_by_name={t.name: t for t in teachers},
+        subject_by_name={s.name: s for s in subjects},
+        label_to_class_groups=label_to_class_groups,
+        teacher_names=[t.name for t in teachers],
+        subject_names=[s.name for s in subjects],
+        class_group_labels=list(label_to_class_groups.keys()),
+    )
+
+
+def _parse_text_to_constraint(text: str, data: _ResolutionData) -> ParsedConstraint:
+    """Parsing tries Claude first (app/services/llm_constraint_parser.py),
     which understands far more phrasing and constraint types than the
     regex parser. If no ANTHROPIC_API_KEY is configured, or the API call
     fails for any reason, it falls back to the regex parser
     (app/services/constraint_parser.py) — via _adapt_legacy, since that
     parser predates the unified output shape — so constraint entry never
-    just breaks because of an LLM/network issue.
+    just breaks because of an LLM/network issue."""
+    parsed = parse_constraint_llm(text, data.teacher_names, data.subject_names, data.class_group_labels)
+    if parsed is None:
+        legacy = regex_parser.parse_constraint(text, data.teacher_names, data.subject_names)
+        parsed = _adapt_legacy(legacy)
+    return parsed
+
+
+def _apply_parsed_constraint(db: Session, school_id: int, parsed: ParsedConstraint, data: _ResolutionData) -> tuple[str, dict, str]:
+    """
+    Turns one already-parsed ParsedConstraint into (db_type, parameters,
+    description) — the second half of what used to be
+    _resolve_constraint_text, split out so both the single-constraint path
+    (_resolve_constraint_text below) and the batch path
+    (_resolve_constraints_batch_text) can resolve N parsed rules against
+    the SAME pre-fetched teacher/subject/class-group lookups (`data`),
+    instead of re-querying the database once per rule.
 
     Types and how they're wired:
       - workload_limit    -> Teacher.max_periods_per_week
@@ -347,31 +403,9 @@ def _resolve_constraint_text(db: Session, school_id: int, text: str) -> tuple[st
     Anything else (no match, or the catch-all scheduling_rule bucket) is
     still returned and shown in the UI, just not applied to the solve.
     """
-    teachers = db.query(Teacher).filter(Teacher.school_id == school_id).all()
-    subjects = db.query(Subject).filter(Subject.school_id == school_id).all()
-    class_groups = db.query(ClassGroup).filter(ClassGroup.school_id == school_id).all()
-
-    teacher_by_name = {t.name: t for t in teachers}
-    subject_by_name = {s.name: s for s in subjects}
-
-    # A "class group label" can name a whole grade (matches every section
-    # in it) or one specific section, so the constraint text can say
-    # either "Grade 3" or "Grade 3 - A" and both resolve.
-    label_to_class_groups: dict[str, list[ClassGroup]] = {}
-    for grade in sorted({cg.grade for cg in class_groups if cg.grade}):
-        label_to_class_groups[grade] = [cg for cg in class_groups if cg.grade == grade]
-    for cg in class_groups:
-        label = f"{cg.grade} - {cg.name}" if cg.grade else cg.name
-        label_to_class_groups[label] = [cg]
-
-    teacher_names = [t.name for t in teachers]
-    subject_names = [s.name for s in subjects]
-    class_group_labels = list(label_to_class_groups.keys())
-
-    parsed = parse_constraint_llm(text, teacher_names, subject_names, class_group_labels)
-    if parsed is None:
-        legacy = regex_parser.parse_constraint(text, teacher_names, subject_names)
-        parsed = _adapt_legacy(legacy)
+    teacher_by_name = data.teacher_by_name
+    subject_by_name = data.subject_by_name
+    label_to_class_groups = data.label_to_class_groups
 
     matched_teacher = teacher_by_name.get(parsed.teacher_name) if parsed.teacher_name else None
     matched_subject = subject_by_name.get(parsed.subject_name) if parsed.subject_name else None
@@ -470,6 +504,49 @@ def _resolve_constraint_text(db: Session, school_id: int, text: str) -> tuple[st
     return db_type, parameters, parsed.description
 
 
+def _resolve_constraint_text(db: Session, school_id: int, text: str) -> tuple[str, dict, str]:
+    """
+    Shared by both POST /parse (new constraint) and PUT /{id}/reparse
+    (editing an existing one's text in place): turns plain-English text
+    into (db_type, parameters, description) — load the school's
+    teacher/subject/class-group names once, parse the one rule, then
+    resolve it. See _apply_parsed_constraint for what each constraint
+    type resolves to.
+    """
+    data = _load_resolution_data(db, school_id)
+    parsed = _parse_text_to_constraint(text, data)
+    return _apply_parsed_constraint(db, school_id, parsed, data)
+
+
+def _resolve_constraints_batch_text(db: Session, school_id: int, text: str) -> list[tuple[str, dict, str]]:
+    """
+    Batch counterpart to _resolve_constraint_text, used by POST
+    /api/constraints/batch: turns a whole block of text — several rules
+    written together, one per line or run into a paragraph — into a list
+    of (db_type, parameters, description) tuples, one per distinct rule
+    found.
+
+    Tries parse_constraints_batch_llm first, which sees the whole block at
+    once and can split it into rules more intelligently than a naive
+    split (e.g. a rule that wraps across two lines, or several rules
+    separated by commas in one sentence). If that's unavailable (no
+    ANTHROPIC_API_KEY, package missing, or the call failed) or the model
+    returned nothing usable, falls back to treating each non-empty line as
+    its own rule and running it through the same single-constraint
+    pipeline every /parse request already uses (LLM-per-line, then regex)
+    — a reasonable assumption for a fallback path, since the batch-entry
+    UI's placeholder text encourages one rule per line anyway.
+    """
+    data = _load_resolution_data(db, school_id)
+
+    parsed_list = parse_constraints_batch_llm(text, data.teacher_names, data.subject_names, data.class_group_labels)
+    if not parsed_list:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        parsed_list = [_parse_text_to_constraint(line, data) for line in lines]
+
+    return [_apply_parsed_constraint(db, school_id, parsed, data) for parsed in parsed_list]
+
+
 @router.post("/parse", response_model=ConstraintParseResponse, status_code=201)
 def parse_and_create_constraint(payload: ConstraintParseRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Take plain-English constraint text, parse it (see
@@ -490,6 +567,57 @@ def parse_and_create_constraint(payload: ConstraintParseRequest, db: Session = D
 
     out = _to_out(db, constraint)
     return ConstraintParseResponse(constraint=out, enforced=out.enforced)
+
+
+@router.post("/batch", response_model=list[ConstraintParseResponse], status_code=201)
+def parse_and_create_constraints_batch(
+    payload: ConstraintBatchParseRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """
+    Batch counterpart to POST /parse: takes a whole block of free text —
+    several rules an admin pasted or typed together, e.g. one per line —
+    and creates one Constraint row per distinct rule found, instead of
+    requiring a separate request (and a separate round of typing) per
+    sentence. See _resolve_constraints_batch_text for how the text gets
+    split into individual rules, with and without an LLM available.
+
+    Every row is created and committed before any conflict-checking
+    happens (`_to_out` below), so a rule that contradicts another rule
+    from the SAME batch gets flagged exactly like it would if the two had
+    been entered one at a time in separate requests — conflict detection
+    is DB-driven (queries every constraint of this type for the school),
+    not batch-scoped, so there's no special-casing needed here for
+    "conflicts with a sibling from this same paste" versus "conflicts
+    with something already saved."
+    """
+    require_school_access(db, current_user, payload.school_id, min_role="admin")
+    resolved = _resolve_constraints_batch_text(db, payload.school_id, payload.text)
+    if not resolved:
+        raise HTTPException(
+            status_code=400,
+            detail="Couldn't find any constraints in that text. Try one clear rule per line.",
+        )
+
+    created = []
+    for db_type, parameters, description in resolved:
+        constraint = Constraint(
+            school_id=payload.school_id,
+            type=db_type,
+            parameters=parameters,
+            is_hard=True,
+            description=description,
+        )
+        db.add(constraint)
+        created.append(constraint)
+    db.commit()
+    for constraint in created:
+        db.refresh(constraint)
+
+    responses = []
+    for constraint in created:
+        out = _to_out(db, constraint)
+        responses.append(ConstraintParseResponse(constraint=out, enforced=out.enforced))
+    return responses
 
 
 @router.put("/{constraint_id}/reparse", response_model=ConstraintParseResponse)
